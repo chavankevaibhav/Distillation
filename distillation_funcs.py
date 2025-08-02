@@ -1,4 +1,5 @@
 # Save the distillation functions to a Python file
+%%writefile distillation_funcs.py
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import root_scalar
@@ -214,3 +215,32 @@ def plot_mccabe_thiele(alpha, R, xd, xb, zf, q, F, D, B):
     ax.grid(alpha=0.3)
     fig.tight_layout()
     return fig, n_stages, feed_stage
+
+def calculate_feed_stage(alpha, R, xd, xb, zf, q, F_mol, D, B):
+    """
+    Calculates the estimated feed stage based on the intersection of the
+    q-line and operating lines.
+    """
+    # Calculate intersection of q-line and rectifying line
+    if abs(q - 1.0) < 1e-6: # q = 1 (saturated liquid), q-line is vertical at x = zf
+        x_feed = zf
+    elif abs(q + R) < 1e-6: # Avoid division by zero if q+R is close to zero
+         x_feed = (xd*q - xd + zf*R + zf) / 1e-6 # Use a small number instead of 0
+    else:
+        x_feed = (xd*q - xd + zf*R + zf) / (q + R)
+
+    y_feed = _rectifying(x_feed, R, xd) # Use the rectifying line to find y_feed
+
+    # Calculate stages to find the one closest to the intersection point
+    x_stages, y_stages, n_stages = calculate_stages(alpha, R, xd, xb, zf, q, F_mol, D, B)
+
+    feed_stage = None
+    for i in range(1, len(x_stages) - 1, 2):
+        if x_stages[i] >= x_feed and x_stages[i+2] <= x_feed:
+            feed_stage = (i + 1) // 2
+            break
+        elif x_stages[i+2] > x_feed and x_stages[i] > x_feed and i==1: # if the intersection is above the first stage
+            feed_stage = 0
+            break
+
+    return feed_stage
