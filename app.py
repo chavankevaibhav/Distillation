@@ -1,3 +1,4 @@
+
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,7 +9,7 @@ from distillation_funcs import (
     calculate_relative_volatility, calculate_material_balance,
     calculate_minimum_reflux_ratio, calculate_actual_reflux_ratio,
     calculate_minimum_stages, calculate_actual_stages,
-    calculate_energy_and_cost, plot_mccabe_thiele
+    calculate_energy_and_cost, plot_mccabe_thiele, calculate_feed_stage # Import the new function
 )
 
 # Streamlit App
@@ -39,9 +40,11 @@ if st.button("Run Simulation"):
     R = calculate_actual_reflux_ratio(Rmin, rr_mult)
     Nmin = calculate_minimum_stages(xd, xb, alpha)
     N_gilliland = calculate_actual_stages(Nmin, R, Rmin)
-    fig, n_stages_mccabe_thiele, feed_stage = plot_mccabe_thiele(alpha, R, xd, xb, feed_comp, q_value, F_mol, D, B)
+    fig, n_stages_mccabe_thiele, feed_stage_mccabe_thiele = plot_mccabe_thiele(alpha, R, xd, xb, feed_comp, q_value, F_mol, D, B)
     Q_cond, Q_reb, total_equip_cost, energy_cost_hr, cost_per_kg = calculate_energy_and_cost(D, R, feed_comp, q_value, F_mol, mw1, mw2, xd, xb, n_stages_mccabe_thiele, bp1, bp2)
 
+    # Calculate the feed stage using the new function
+    calculated_feed_stage = calculate_feed_stage(alpha, R, xd, xb, feed_comp, q_value, F_mol, D, B)
 
     st.subheader("Distillation Parameters")
     st.write(f"Relative Volatility (α): {alpha:.4f}")
@@ -74,4 +77,6 @@ if st.button("Run Simulation"):
 
     st.subheader("McCabe-Thiele Diagram")
     st.pyplot(fig)
-    st.write(f"Estimated Feed Stage (McCabe-Thiele): {feed_stage}")
+    st.write(f"Estimated Feed Stage (McCabe-Thiele Plot): {feed_stage_mccabe_thiele}")
+    # Display the calculated feed stage
+    st.write(f"Estimated Feed Stage (Calculated): {calculated_feed_stage}")
