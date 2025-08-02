@@ -98,22 +98,25 @@ def calculate_stages(alpha, R, xd, xb, feed_comp, q_value, F_mol, D, B):
 
     return x_stages, y_stages, stage
 
-def calculate_energy_and_cost(D, R, feed_comp, q_value, F_mol, mw1, mw2, xd, xb, n_stages, bp1, bp2):
+def calculate_energy_and_cost(D, R, feed_comp, q_value, F_mol, mw1, mw2, xd, xb, n_stages, bp1, bp2, energy_cost_per_kwh, tower_cost_mult, condenser_cost_mult, reboiler_cost_mult):
+    """
+    Calculates energy consumption and equipment costs with customizable cost parameters.
+    """
     avg_dH_vap = feed_comp * 88 * (bp1 + 273.15) + (1 - feed_comp) * 88 * (bp2 + 273.15)  # J/mol
     V = (R + 1) * D  # Vapor flow (mol/hr)
     Q_cond = V * avg_dH_vap / 3.6e6  # kWh
     Q_reb = (V + (1 - q_value) * F_mol) * avg_dH_vap / 3.6e6  # kWh
 
-    tower_cost = 15000 * (n_stages ** 0.8)
-    condenser_cost = 5000 * (Q_cond ** 0.65)
-    reboiler_cost = 6000 * (Q_reb ** 0.7)
+    tower_cost = tower_cost_mult * 15000 * (n_stages ** 0.8)
+    condenser_cost = condenser_cost_mult * 5000 * (Q_cond ** 0.65)
+    reboiler_cost = reboiler_cost_mult * 6000 * (Q_reb ** 0.7)
     total_equip_cost = tower_cost + condenser_cost + reboiler_cost
-    energy_cost_hr = (Q_cond + Q_reb) * 0.10  # $0.10/kWh
+    energy_cost_hr = (Q_cond + Q_reb) * energy_cost_per_kwh  # $/kWh
 
     distillate_kg = D * (xd * mw1 + (1 - xd) * mw2) / 1000  # kg/hr
     cost_per_kg = energy_cost_hr / distillate_kg if distillate_kg > 0 else 0
 
-    return Q_cond, Q_reb, total_equip_cost, energy_cost_hr, cost_per_kg
+    return Q_cond, Q_reb, total_equip_cost, energy_cost_hr, cost_per_kg, tower_cost, condenser_cost, reboiler_cost
 
 def _equilibrium(x, alpha):
     return alpha * x / (1 + (alpha - 1) * x)
@@ -243,3 +246,4 @@ def calculate_feed_stage(alpha, R, xd, xb, zf, q, F_mol, D, B):
             break
 
     return feed_stage
+
