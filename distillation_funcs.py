@@ -1,7 +1,9 @@
-# Save the distillation functions to a Python file
+
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import root_scalar
+import requests
+from bs4 import BeautifulSoup
 
 # Constants
 R_gas = 8.314  # J/mol·K
@@ -53,7 +55,17 @@ def rectifying_line(x, R, xd):
     return (R/(R+1)) * x + xd/(R+1)
 
 def stripping_line(x, L_bar, V_bar, B, xb):
-    return (L_bar / V_bar) * x - (B * xb) / V_bar
+    Lbar = R * D + q * F
+    Vbar = Lbar - B
+    return Lbar / Vbar * x - B * xb / Vbar
+
+def _q_line(x, q, zf):
+    """Returns y on the q-line for a given x."""
+    if abs(q - 1.0) < 1e-6: # Handle q = 1 (saturated liquid)
+        return np.full_like(x, np.nan) # Return NaN for a vertical line
+    else:
+        return q / (q - 1) * x - zf / (q - 1)
+
 
 def calculate_stages(alpha, R, xd, xb, feed_comp, q_value, F_mol, D, B):
     def equilibrium(x):
@@ -224,6 +236,16 @@ def calculate_feed_stage(alpha, R, xd, xb, zf, q, F_mol, D, B):
     q-line and operating lines.
     """
     # Calculate intersection of q-line and rectifying line
+    # q-line: y = q/(q-1) * x - zf/(q-1)
+    # Rectifying line: y = R/(R+1) * x + xd/(R+1)
+    # q/(q-1) * x - zf/(q-1) = R/(R+1) * x + xd/(R+1)
+    # (q/(q-1) - R/(R+1)) * x = xd/(R+1) + zf/(q-1)
+    # ((q*(R+1) - R*(q-1)) / ((q-1)*(R+1))) * x = (xd*(q-1) + zf*(R+1)) / ((R+1)*(q-1))
+    # (qR + q - qR + R) * x = xd*q - xd + zf*R + zf
+    # (q + R) * x = xd*q - xd + zf*R + zf
+    # x_feed = (xd*q - xd + zf*R + zf) / (q + R)
+
+    # Avoid division by zero if q=1 and R=0
     if abs(q - 1.0) < 1e-6: # q = 1 (saturated liquid), q-line is vertical at x = zf
         x_feed = zf
     elif abs(q + R) < 1e-6: # Avoid division by zero if q+R is close to zero
@@ -245,5 +267,80 @@ def calculate_feed_stage(alpha, R, xd, xb, zf, q, F_mol, D, B):
             feed_stage = 0
             break
 
+
     return feed_stage
 
+
+def fetch_nist_data(component_name):
+    """
+    Fetches boiling point and molecular weight data for a component from NIST.
+    Returns a dictionary with 'bp' and 'mw', or None if data not found.
+    """
+    base_url = "https://webbook.nist.gov/cgi/cbook.cgi?Name="
+    search_url = f"{base_url}{requests.utils.quote(component_name)}"
+
+    try:
+        response = requests.get(search_url)
+        response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Find boiling point - This part is highly dependent on NIST page structure
+        # Need to inspect the HTML source of a sample page (e.g., Ethanol)
+        boiling_point = None
+        molecular_weight = None
+
+        # Example: Look for a table or section containing property data.
+        # This is a simplified example and needs to be refined based on actual NIST page structure.
+        # Searching for "Boiling Point" and "Molecular Weight" text
+        for tag in soup.find_all(['td', 'th']):
+            if "Boiling Point" in tag.get_text():
+                try:
+                    # Assuming boiling point is in a nearby tag, e.g., the next <td>
+                    bp_tag = tag.find_next(['td', 'span']) # Adjust tag based on inspection
+                    if bp_tag:
+                        bp_text = bp_tag.get_text().split(';')[0].strip() # Extract value before semicolon
+                        # Attempt to parse the temperature value (might need more robust parsing)
+                        boiling_point = float(''.join(filter(str.isdigit or str == '.' or str =='-', bp_text))) # Extract numbers and handle decimals/negatives
+                        # Adjusting to look for temperature unit if needed (°C)
+                        if 'K' in bp_text: # Convert K to °C if needed
+                             boiling_point -= 273.15
+                        # Further refinement needed to handle units and multiple values
+
+
+                except (ValueError, AttributeError) as e:
+                    print(f"Could not parse boiling point for {component_name}: {e}")
+                    boiling_point = None # Reset if parsing fails
+                # Break after finding the first match
+                if boiling_point is not None:
+                    break
+
+
+        # Find molecular weight
+        # Similar approach, needs refinement based on actual NIST page structure
+        for tag in soup.find_all(['td', 'th']):
+             if "Molecular Weight" in tag.get_text():
+                 try:
+                    # Assuming molecular weight is in a nearby tag
+                    mw_tag = tag.find_next(['td', 'span']) # Adjust tag based on inspection
+                    if mw_tag:
+                        molecular_weight = float(mw_tag.get_text().split(';')[0].strip()) # Extract value before semicolon
+                 except (ValueError, AttributeError) as e:
+                     print(f"Could not parse molecular weight for {component_name}: {e}")
+                     molecular_weight = None # Reset if parsing fails
+                 # Break after finding the first match
+                 if molecular_weight is not None:
+                     break
+
+
+        if boiling_point is not None and molecular_weight is not None:
+            return {"bp": boiling_point, "mw": molecular_weight}
+        else:
+            print(f"Could not find complete data for {component_name} on NIST.")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching data for {component_name} from NIST: {e}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred while processing {component_name}: {e}")
+        return None
