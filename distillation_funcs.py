@@ -1,5 +1,4 @@
 # Save the distillation functions to a Python file
-%%writefile distillation_funcs.py
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import root_scalar
