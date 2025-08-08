@@ -1,23 +1,13 @@
-import streamlit as st
+
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import root_scalar
 import requests
 from bs4 import BeautifulSoup
-import pandas as pd
-
-# Set page configuration
-st.set_page_config(
-    page_title="Distillation Column Design Tool",
-    page_icon="⚗️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # Constants
 R_gas = 8.314  # J/mol·K
 
-# All the functions from your original code
 def calculate_relative_volatility(bp1, bp2):
     Tb1 = bp1 + 273.15
     Tb2 = bp2 + 273.15
@@ -58,13 +48,13 @@ def calculate_actual_stages(Nmin, R, Rmin):
     Y = 0.75 * (1 - X**0.5668)
     return (Nmin + Y) / (1 - Y)
 
-def _equilibrium(x, alpha):
+def equilibrium(x, alpha):
     return alpha * x / (1 + (alpha - 1) * x)
 
-def _rectifying(x, R, xd):
-    return R / (R + 1) * x + xd / (R + 1)
+def rectifying_line(x, R, xd):
+    return (R/(R+1)) * x + xd/(R+1)
 
-def _stripping(x, R, q, F, D, B, xb):
+def stripping_line(x, L_bar, V_bar, B, xb):
     Lbar = R * D + q * F
     Vbar = Lbar - B
     return Lbar / Vbar * x - B * xb / Vbar
@@ -75,6 +65,7 @@ def _q_line(x, q, zf):
         return np.full_like(x, np.nan) # Return NaN for a vertical line
     else:
         return q / (q - 1) * x - zf / (q - 1)
+
 
 def calculate_stages(alpha, R, xd, xb, feed_comp, q_value, F_mol, D, B):
     def equilibrium(x):
@@ -118,6 +109,44 @@ def calculate_stages(alpha, R, xd, xb, feed_comp, q_value, F_mol, D, B):
             break
 
     return x_stages, y_stages, stage
+
+def calculate_energy_and_cost(D, R, feed_comp, q_value, F_mol, mw1, mw2, xd, xb, n_stages, bp1, bp2, energy_cost_per_kwh, tower_cost_mult, condenser_cost_mult, reboiler_cost_mult):
+    """
+    Calculates energy consumption and equipment costs with customizable cost parameters.
+    """
+    avg_dH_vap = feed_comp * 88 * (bp1 + 273.15) + (1 - feed_comp) * 88 * (bp2 + 273.15)  # J/mol
+    V = (R + 1) * D  # Vapor flow (mol/hr)
+    Q_cond = V * avg_dH_vap / 3.6e6  # kWh
+    Q_reb = (V + (1 - q_value) * F_mol) * avg_dH_vap / 3.6e6  # kWh
+
+    tower_cost = tower_cost_mult * 15000 * (n_stages ** 0.8)
+    condenser_cost = condenser_cost_mult * 5000 * (Q_cond ** 0.65)
+    reboiler_cost = reboiler_cost_mult * 6000 * (Q_reb ** 0.7)
+    total_equip_cost = tower_cost + condenser_cost + reboiler_cost
+    energy_cost_hr = (Q_cond + Q_reb) * energy_cost_per_kwh  # $/kWh
+
+    distillate_kg = D * (xd * mw1 + (1 - xd) * mw2) / 1000  # kg/hr
+    cost_per_kg = energy_cost_hr / distillate_kg if distillate_kg > 0 else 0
+
+    return Q_cond, Q_reb, total_equip_cost, energy_cost_hr, cost_per_kg, tower_cost, condenser_cost, reboiler_cost
+
+def _equilibrium(x, alpha):
+    return alpha * x / (1 + (alpha - 1) * x)
+
+def _rectifying(x, R, xd):
+    return R / (R + 1) * x + xd / (R + 1)
+
+def _stripping(x, R, q, F, D, B, xb):
+    Lbar = R * D + q * F
+    Vbar = Lbar - B
+    return Lbar / Vbar * x - B * xb / Vbar
+
+def _q_line(x, q, zf):
+    """Returns y on the q-line for a given x."""
+    if abs(q - 1.0) < 1e-6: # Handle q = 1 (saturated liquid)
+        return np.full_like(x, np.nan) # Return NaN for a vertical line
+    else:
+        return q / (q - 1) * x - zf / (q - 1)
 
 def plot_mccabe_thiele(alpha, R, xd, xb, zf, q, F, D, B):
     """
@@ -165,9 +194,9 @@ def plot_mccabe_thiele(alpha, R, xd, xb, zf, q, F, D, B):
         if x_op < xb:
             break
 
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(8, 8))
     ax.plot(x, y_eq, 'b', lw=2, label='Equilibrium')
-    ax.plot([0, 1], [0, 1], 'k--', lw=0.7, alpha=0.5)
+    ax.plot([0, 1], [0, 1], 'k--', lw=0.7)
 
     ax.plot(x, y_rect, 'g', lw=2, label='Rectifying')
     ax.plot(x, y_strip, 'r', lw=2, label='Stripping')
@@ -178,205 +207,140 @@ def plot_mccabe_thiele(alpha, R, xd, xb, zf, q, F, D, B):
         ax.plot(qx, qy, 'm--', lw=2, label='q-line')
 
     ax.plot(stairs_x, stairs_y, 'o-', color='orange', markersize=4,
-            label='Stages', alpha=0.8)
+            label='Stages')
 
     if feed_stage is not None:
         idx = 2 * feed_stage + 1
-        if idx < len(stairs_x):
-            ax.scatter(stairs_x[idx], stairs_y[idx], color='purple',
-                       s=100, zorder=5, label=f'Feed stage ({feed_stage})')
+        ax.scatter(stairs_x[idx], stairs_y[idx], color='purple',
+                   s=80, zorder=5, label=f'Feed stage ({feed_stage})')
 
-    for i in range(1, min(n_stages + 1, 20)):  # Limit labels to avoid clutter
+    for i in range(1, n_stages + 1):
         idx = 4 * i - 2
         if idx < len(stairs_x):
             ax.text(stairs_x[idx] + 0.01, stairs_y[idx], str(i),
-                    fontsize=8, color='navy', alpha=0.8)
+                    fontsize=9, color='navy')
 
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
-    ax.set_xlabel('Liquid mole fraction (light component)', fontsize=12)
-    ax.set_ylabel('Vapor mole fraction (light component)', fontsize=12)
-    ax.set_title('McCabe-Thiele Diagram', fontsize=14, fontweight='bold')
-    ax.legend(loc='best')
+    ax.set_xlabel('Liquid mole fraction (light key)')
+    ax.set_ylabel('Vapor mole fraction (light key)')
+    ax.set_title('McCabe-Thiele Diagram')
+    ax.legend()
     ax.grid(alpha=0.3)
-    
+    fig.tight_layout()
     return fig, n_stages, feed_stage
 
-def calculate_energy_and_cost(D, R, feed_comp, q_value, F_mol, mw1, mw2, xd, xb, n_stages, bp1, bp2, energy_cost_per_kwh, tower_cost_mult, condenser_cost_mult, reboiler_cost_mult):
+def calculate_feed_stage(alpha, R, xd, xb, zf, q, F_mol, D, B):
     """
-    Calculates energy consumption and equipment costs with customizable cost parameters.
+    Calculates the estimated feed stage based on the intersection of the
+    q-line and operating lines.
     """
-    avg_dH_vap = feed_comp * 88 * (bp1 + 273.15) + (1 - feed_comp) * 88 * (bp2 + 273.15)  # J/mol
-    V = (R + 1) * D  # Vapor flow (mol/hr)
-    Q_cond = V * avg_dH_vap / 3.6e6  # kWh
-    Q_reb = (V + (1 - q_value) * F_mol) * avg_dH_vap / 3.6e6  # kWh
+    # Calculate intersection of q-line and rectifying line
+    # q-line: y = q/(q-1) * x - zf/(q-1)
+    # Rectifying line: y = R/(R+1) * x + xd/(R+1)
+    # q/(q-1) * x - zf/(q-1) = R/(R+1) * x + xd/(R+1)
+    # (q/(q-1) - R/(R+1)) * x = xd/(R+1) + zf/(q-1)
+    # ((q*(R+1) - R*(q-1)) / ((q-1)*(R+1))) * x = (xd*(q-1) + zf*(R+1)) / ((R+1)*(q-1))
+    # (qR + q - qR + R) * x = xd*q - xd + zf*R + zf
+    # (q + R) * x = xd*q - xd + zf*R + zf
+    # x_feed = (xd*q - xd + zf*R + zf) / (q + R)
 
-    tower_cost = tower_cost_mult * 15000 * (n_stages ** 0.8)
-    condenser_cost = condenser_cost_mult * 5000 * (Q_cond ** 0.65)
-    reboiler_cost = reboiler_cost_mult * 6000 * (Q_reb ** 0.7)
-    total_equip_cost = tower_cost + condenser_cost + reboiler_cost
-    energy_cost_hr = (Q_cond + Q_reb) * energy_cost_per_kwh  # $/kWh
+    # Avoid division by zero if q=1 and R=0
+    if abs(q - 1.0) < 1e-6: # q = 1 (saturated liquid), q-line is vertical at x = zf
+        x_feed = zf
+    elif abs(q + R) < 1e-6: # Avoid division by zero if q+R is close to zero
+         x_feed = (xd*q - xd + zf*R + zf) / 1e-6 # Use a small number instead of 0
+    else:
+        x_feed = (xd*q - xd + zf*R + zf) / (q + R)
 
-    distillate_kg = D * (xd * mw1 + (1 - xd) * mw2) / 1000  # kg/hr
-    cost_per_kg = energy_cost_hr / distillate_kg if distillate_kg > 0 else 0
+    y_feed = _rectifying(x_feed, R, xd) # Use the rectifying line to find y_feed
 
-    return Q_cond, Q_reb, total_equip_cost, energy_cost_hr, cost_per_kg, tower_cost, condenser_cost, reboiler_cost
+    # Calculate stages to find the one closest to the intersection point
+    x_stages, y_stages, n_stages = calculate_stages(alpha, R, xd, xb, zf, q, F_mol, D, B)
 
-# Streamlit App
-def main():
-    st.title("⚗️ Distillation Column Design Tool")
-    st.markdown("### Design and analyze binary distillation columns with McCabe-Thiele method")
-    
-    # Sidebar for inputs
-    with st.sidebar:
-        st.header("📋 Input Parameters")
-        
-        # Component properties
-        st.subheader("Component Properties")
-        col1, col2 = st.columns(2)
-        with col1:
-            bp1 = st.number_input("Light component BP (°C)", value=78.4, step=0.1, help="Boiling point of light component")
-            mw1 = st.number_input("Light component MW (g/mol)", value=46.07, step=0.01, help="Molecular weight of light component")
-        with col2:
-            bp2 = st.number_input("Heavy component BP (°C)", value=100.0, step=0.1, help="Boiling point of heavy component")
-            mw2 = st.number_input("Heavy component MW (g/mol)", value=18.02, step=0.01, help="Molecular weight of heavy component")
-        
-        # Operating conditions
-        st.subheader("Operating Conditions")
-        feed_comp = st.slider("Feed composition (light key)", 0.01, 0.99, 0.5, 0.01, help="Mole fraction of light component in feed")
-        xd = st.slider("Distillate composition", 0.01, 0.99, 0.95, 0.01, help="Mole fraction of light component in distillate")
-        xb = st.slider("Bottoms composition", 0.01, 0.99, 0.05, 0.01, help="Mole fraction of light component in bottoms")
-        
-        feed_rate = st.number_input("Feed rate (kg/hr)", value=1000.0, min_value=1.0, step=10.0)
-        q_value = st.slider("q-value", 0.0, 2.0, 1.0, 0.1, help="0=saturated vapor, 1=saturated liquid, >1=subcooled liquid")
-        rr_mult = st.slider("Reflux ratio multiplier", 1.1, 5.0, 1.5, 0.1, help="Multiple of minimum reflux ratio")
-        
-        # Cost parameters
-        st.subheader("Economic Parameters")
-        energy_cost = st.number_input("Energy cost ($/kWh)", value=0.10, step=0.01, format="%.3f")
-        tower_mult = st.slider("Tower cost multiplier", 0.5, 2.0, 1.0, 0.1)
-        condenser_mult = st.slider("Condenser cost multiplier", 0.5, 2.0, 1.0, 0.1)
-        reboiler_mult = st.slider("Reboiler cost multiplier", 0.5, 2.0, 1.0, 0.1)
-    
-    # Main content area
-    if st.button("🔬 Calculate Design", type="primary"):
-        try:
-            # Calculations
-            alpha = calculate_relative_volatility(bp1, bp2)
-            D, B, F_mol = calculate_material_balance(feed_comp, xb, xd, feed_rate, mw1, mw2)
-            Rmin = calculate_minimum_reflux_ratio(alpha, feed_comp, q_value)
-            R = calculate_actual_reflux_ratio(Rmin, rr_mult)
-            Nmin = calculate_minimum_stages(xd, xb, alpha)
-            N_actual = calculate_actual_stages(Nmin, R, Rmin)
-            
-            # Stage-by-stage calculation
-            x_stages, y_stages, n_stages = calculate_stages(alpha, R, xd, xb, feed_comp, q_value, F_mol, D, B)
-            
-            # Energy and cost calculations
-            Q_cond, Q_reb, total_cost, energy_cost_hr, cost_per_kg, tower_cost, condenser_cost, reboiler_cost = calculate_energy_and_cost(
-                D, R, feed_comp, q_value, F_mol, mw1, mw2, xd, xb, n_stages, bp1, bp2, 
-                energy_cost, tower_mult, condenser_mult, reboiler_mult
-            )
-            
-            # Display results in columns
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                st.subheader("📊 McCabe-Thiele Diagram")
-                fig, stages_graphical, feed_stage = plot_mccabe_thiele(alpha, R, xd, xb, feed_comp, q_value, F_mol, D, B)
-                st.pyplot(fig)
-            
-            with col2:
-                st.subheader("📈 Design Results")
-                
-                # Key results
-                results_df = pd.DataFrame({
-                    'Parameter': [
-                        'Relative volatility (α)',
-                        'Minimum reflux ratio',
-                        'Actual reflux ratio', 
-                        'Minimum stages',
-                        'Actual stages (Gilliland)',
-                        'Actual stages (McCabe-Thiele)',
-                        'Feed stage'
-                    ],
-                    'Value': [
-                        f"{alpha:.3f}",
-                        f"{Rmin:.3f}",
-                        f"{R:.3f}",
-                        f"{Nmin:.1f}",
-                        f"{N_actual:.1f}",
-                        f"{stages_graphical}",
-                        f"{feed_stage if feed_stage else 'N/A'}"
-                    ]
-                })
-                
-                st.dataframe(results_df, hide_index=True)
-            
-            # Material balance
-            st.subheader("⚖️ Material Balance")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Feed Rate", f"{F_mol:.1f} mol/hr")
-            with col2:
-                st.metric("Distillate Rate", f"{D:.1f} mol/hr")
-            with col3:
-                st.metric("Bottoms Rate", f"{B:.1f} mol/hr")
-            
-            # Energy requirements
-            st.subheader("⚡ Energy Requirements")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Condenser Duty", f"{Q_cond:.1f} kW")
-            with col2:
-                st.metric("Reboiler Duty", f"{Q_reb:.1f} kW")
-            with col3:
-                st.metric("Energy Cost", f"${energy_cost_hr:.2f}/hr")
-            
-            # Cost breakdown
-            st.subheader("💰 Equipment Costs")
-            cost_data = {
-                'Equipment': ['Tower', 'Condenser', 'Reboiler', 'Total'],
-                'Cost ($)': [f"{tower_cost:,.0f}", f"{condenser_cost:,.0f}", f"{reboiler_cost:,.0f}", f"{total_cost:,.0f}"]
-            }
-            cost_df = pd.DataFrame(cost_data)
-            st.dataframe(cost_df, hide_index=True)
-            
-            # Additional metrics
-            st.subheader("📋 Production Metrics")
-            distillate_kg = D * (xd * mw1 + (1 - xd) * mw2) / 1000
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Distillate Production", f"{distillate_kg:.1f} kg/hr")
-            with col2:
-                st.metric("Cost per kg Distillate", f"${cost_per_kg:.3f}/kg")
-                
-        except Exception as e:
-            st.error(f"Calculation error: {str(e)}")
-            st.info("Please check your input parameters and try again.")
-    
-    # Information section
-    with st.expander("ℹ️ About this tool"):
-        st.markdown("""
-        This tool designs binary distillation columns using the McCabe-Thiele graphical method.
-        
-        **Key Features:**
-        - Calculates minimum reflux ratio and stages
-        - Generates McCabe-Thiele diagram with stage stepping
-        - Estimates energy requirements and equipment costs
-        - Provides complete material balance
-        
-        **Assumptions:**
-        - Binary system with constant relative volatility
-        - Constant molal overflow
-        - Trouton's rule for enthalpy of vaporization (ΔHvap = 88×Tb)
-        - Ideal vapor-liquid equilibrium
-        
-        **Notes:**
-        - Light component should have lower boiling point
-        - q = 1.0 for saturated liquid feed
-        - Reflux ratio multiplier typically 1.2-2.0 times minimum
-        """)
+    feed_stage = None
+    for i in range(1, len(x_stages) - 1, 2):
+        if x_stages[i] >= x_feed and x_stages[i+2] <= x_feed:
+            feed_stage = (i + 1) // 2
+            break
+        elif x_stages[i+2] > x_feed and x_stages[i] > x_feed and i==1: # if the intersection is above the first stage
+            feed_stage = 0
+            break
 
-if __name__ == "__main__":
-    main()
+
+    return feed_stage
+
+
+def fetch_nist_data(component_name):
+    """
+    Fetches boiling point and molecular weight data for a component from NIST.
+    Returns a dictionary with 'bp' and 'mw', or None if data not found.
+    """
+    base_url = "https://webbook.nist.gov/cgi/cbook.cgi?Name="
+    search_url = f"{base_url}{requests.utils.quote(component_name)}"
+
+    try:
+        response = requests.get(search_url)
+        response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Find boiling point - This part is highly dependent on NIST page structure
+        # Need to inspect the HTML source of a sample page (e.g., Ethanol)
+        boiling_point = None
+        molecular_weight = None
+
+        # Example: Look for a table or section containing property data.
+        # This is a simplified example and needs to be refined based on actual NIST page structure.
+        # Searching for "Boiling Point" and "Molecular Weight" text
+        for tag in soup.find_all(['td', 'th']):
+            if "Boiling Point" in tag.get_text():
+                try:
+                    # Assuming boiling point is in a nearby tag, e.g., the next <td>
+                    bp_tag = tag.find_next(['td', 'span']) # Adjust tag based on inspection
+                    if bp_tag:
+                        bp_text = bp_tag.get_text().split(';')[0].strip() # Extract value before semicolon
+                        # Attempt to parse the temperature value (might need more robust parsing)
+                        boiling_point = float(''.join(filter(str.isdigit or str == '.' or str =='-', bp_text))) # Extract numbers and handle decimals/negatives
+                        # Adjusting to look for temperature unit if needed (°C)
+                        if 'K' in bp_text: # Convert K to °C if needed
+                             boiling_point -= 273.15
+                        # Further refinement needed to handle units and multiple values
+
+
+                except (ValueError, AttributeError) as e:
+                    print(f"Could not parse boiling point for {component_name}: {e}")
+                    boiling_point = None # Reset if parsing fails
+                # Break after finding the first match
+                if boiling_point is not None:
+                    break
+
+
+        # Find molecular weight
+        # Similar approach, needs refinement based on actual NIST page structure
+        for tag in soup.find_all(['td', 'th']):
+             if "Molecular Weight" in tag.get_text():
+                 try:
+                    # Assuming molecular weight is in a nearby tag
+                    mw_tag = tag.find_next(['td', 'span']) # Adjust tag based on inspection
+                    if mw_tag:
+                        molecular_weight = float(mw_tag.get_text().split(';')[0].strip()) # Extract value before semicolon
+                 except (ValueError, AttributeError) as e:
+                     print(f"Could not parse molecular weight for {component_name}: {e}")
+                     molecular_weight = None # Reset if parsing fails
+                 # Break after finding the first match
+                 if molecular_weight is not None:
+                     break
+
+
+        if boiling_point is not None and molecular_weight is not None:
+            return {"bp": boiling_point, "mw": molecular_weight}
+        else:
+            print(f"Could not find complete data for {component_name} on NIST.")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching data for {component_name} from NIST: {e}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred while processing {component_name}: {e}")
+        return None
