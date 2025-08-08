@@ -8,940 +8,762 @@ from bs4 import BeautifulSoup
 # Constants
 R_gas = 8.314  # J/mol·K
 
-def antoine_vapor_pressure(T_celsius, A, B, C):
+def calculate_relative_volatility(bp1, bp2):
     """
-    Calculates vapor pressure in kPa using the Antoine equation.
-    T_celsius: Temperature in °C
-    A, B, C: Antoine coefficients
-    Returns: Vapor pressure in kPa
+    Calculates relative volatility using Trouton's rule (simplified).
+    This is a simplified approach and not used in the rigorous VLE calculations
+    for the McCabe-Thiele plot, but kept for simplified Rmin/Nmin calculations.
     """
-    # Antoine equation: log10(P_vp) = A - (B / (T + C))
-    # T in °C, P_vp in kPa
-    T_kelvin = T_celsius + 273.15 # Convert to Kelvin if coefficients are for Kelvin
-    # Check coefficient basis - assume for Celsius based on typical usage, adjust if needed
-    try:
-        log10_Pvp_kpa = A - (B / (T_celsius + C))
-        P_vp_kpa = 10**log10_Pvp_kpa
-        return P_vp_kpa
-    except Exception as e:
-        print(f"Error calculating Antoine vapor pressure: {e}")
-        return np.nan
+    Tb1 = bp1 + 273.15
+    Tb2 = bp2 + 273.15
+    dH_vap1 = 88 * Tb1  # Trouton's rule (J/mol)
+    dH_vap2 = 88 * Tb2  # Trouton's rule (J/mol)
+    T_avg = (Tb1 + Tb2) / 2
+    # This calculation of alpha based on enthalpy difference and average T is also a simplification.
+    # A more accurate alpha for Rmin/Nmin would be based on vapor pressures at a relevant T (e.g., feed T).
+    alpha = np.exp((dH_vap1 - dH_vap2) / (R_gas * T_avg) * (Tb1 - Tb2) / T_avg)
+    return alpha
 
-def kpa_to_atm(p_kpa):
-    """Converts pressure from kPa to atm."""
-    return p_kpa / 101.325
-
-def calculate_vle(x1, T_celsius, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1=1.0, gamma2=1.0):
+def calculate_material_balance(feed_comp, xb, xd, feed_rate, mw1, mw2):
     """
-    Calculates the equilibrium vapor mole fraction (y1) for component 1.
-    x1: Liquid mole fraction of component 1
-    T_celsius: Temperature in °C
-    P_atm: Total pressure in atm
-    antoine_coeffs1: (A, B, C) for component 1
-    antoine_coeffs2: (A, B, C) for component 2
-    gamma1, gamma2: Activity coefficients (default to 1 for ideal solution)
-    Returns: Equilibrium vapor mole fraction y1, or None if calculation fails.
+    Calculates distillate and bottoms flow rates based on overall and component material balances.
+    feed_comp: Mole fraction of light key in feed (zf)
+    xb: Mole fraction of light key in bottoms
+    xd: Mole fraction of light key in distillate
+    feed_rate: Total feed flow rate (kg/hr)
+    mw1: Molecular weight of light key (g/mol)
+    mw2: Molecular weight of heavy key (g/mol)
+    Returns: D (distillate mol/hr), B (bottoms mol/hr), F_mol (feed mol/hr)
     """
-    try:
-        P_vp1_kpa = antoine_vapor_pressure(T_celsius, *antoine_coeffs1)
-        P_vp2_kpa = antoine_vapor_pressure(T_celsius, *antoine_coeffs2)
-
-        P_vp1_atm = kpa_to_atm(P_vp1_kpa)
-        P_vp2_atm = kpa_to_atm(P_vp2_kpa)
-
-        # Raoult's Law with activity coefficients: P * y1 = x1 * gamma1 * P_vp1
-        # P * y2 = x2 * gamma2 * P_vp2
-        # y1 + y2 = 1 => y2 = 1 - y1
-        # P * (1 - y1) = (1 - x1) * gamma2 * P_vp2
-        # P = x1 * gamma1 * P_vp1 + (1 - x1) * gamma2 * P_vp2  (Bubble Point Pressure)
-
-        # Assuming Bubble Point calculation to find T for a given x1 and P
-        # Or Rachford-Rice for flash calculation
-
-        # For VLE calculation (given x1, T, P), we need to check if T is the bubble point temperature at P
-        # Assuming ideal solution (gamma1=gamma2=1) and Raoult's Law for now:
-        # P * y1 = x1 * P_vp1_atm
-        # P * y2 = x2 * P_vp2_atm
-        # y1 = (x1 * P_vp1_atm) / P_atm
-
-        # More rigorously, solve for y1 using the bubble point pressure equation
-        # P = x1 * gamma1 * P_vp1_atm + (1 - x1) * gamma2 * P_vp2_atm
-        # If the given P_atm is not the bubble point pressure at T and x1,
-        # this T is not the equilibrium temperature for this x1 at this P.
-
-        # Let's implement the bubble point temperature calculation first, as it's needed for the stages.
-        # Given x1 and P, find T such that P = x1 * gamma1 * P_vp1(T) + (1-x1) * gamma2 * P_vp2(T)
-        # Then calculate y1 at that T.
-
-        # For simplicity in this initial step, let's assume we are at the bubble point and
-        # calculate y1 using the modified Raoult's Law: y1 = (x1 * gamma1 * P_vp1_atm) / P_atm
-        # This assumes the provided T is the equilibrium temperature for the given x1 and P.
-        # A more robust implementation would involve a bubble point calculation.
-
-        # Let's return y1 based on Raoult's Law for now, assuming the input T is the equilibrium T.
-        # This is consistent with replacing the old equilibrium function.
-        y1 = (x1 * gamma1 * P_vp1_atm) / P_atm
-        return y1
-
-    except Exception as e:
-        print(f"Error in calculate_vle: {e}")
-        return np.nan
-
-
-def nrtl_activity_coefficient(x1, T_celsius, params):
-    """
-    Placeholder for NRTL activity coefficient calculation.
-    Currently returns ideal activity coefficients (1.0).
-    params: Dictionary or tuple of NRTL parameters
-    """
-    # This function would implement the NRTL model
-    # For now, return ideal
-    return 1.0
-
-def uniquac_activity_coefficient(x1, T_celsius, params):
-    """
-    Placeholder for UNIQUAC activity coefficient calculation.
-    Currently returns ideal activity coefficients (1.0).
-    params: Dictionary or tuple of UNIQUAC parameters
-    """
-    # This function would implement the UNIQUAC model
-    # For now, return ideal
-    return 1.0
-
-
-# Update the equilibrium function to use the new VLE calculation
-def equilibrium(x, T_celsius, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1=1.0, gamma2=1.0):
-     """
-     Calculates the equilibrium vapor mole fraction (y) using calculate_vle.
-     x: Liquid mole fraction of light key
-     T_celsius: Temperature in °C
-     P_atm: Total pressure in atm
-     antoine_coeffs1: (A, B, C) for light key
-     antoine_coeffs2: (A, B, C) for heavy key
-     gamma1, gamma2: Activity coefficients (default to 1 for ideal solution)
-     Returns: Equilibrium vapor mole fraction y.
-     """
-     # In a real stage calculation, T would be the bubble point temperature at liquid composition x and pressure P.
-     # For the McCabe-Thiele plot and stage stepping, we need to find the equilibrium T for each x on the equilibrium curve.
-     # This requires solving P_total = x1*gamma1*Pvp1(T) + x2*gamma2*Pvp2(T) for T.
-     # Let's create a helper function for bubble point temperature.
-
-     def bubble_point_temperature(x1, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1_func=lambda x, T: 1.0, gamma2_func=lambda x, T: 1.0):
-         """
-         Calculates the bubble point temperature (°C) for a given liquid composition and pressure.
-         x1: Liquid mole fraction of component 1
-         P_atm: Total pressure in atm
-         antoine_coeffs1: (A, B, C) for component 1
-         antoine_coeffs2: (A, B, C) for component 2
-         gamma1_func: Function to calculate activity coefficient for component 1 (takes x1, T_celsius)
-         gamma2_func: Function to calculate activity coefficient for component 2 (takes x1, T_celsius)
-         Returns: Bubble point temperature in °C.
-         """
-         def pressure_difference(T):
-             try:
-                 gamma1 = gamma1_func(x1, T)
-                 gamma2 = gamma2_func(1 - x1, T) # Assuming activity coef depends on liquid comp of that component
-
-                 P_vp1_kpa = antoine_vapor_pressure(T, *antoine_coeffs1)
-                 P_vp2_kpa = antoine_vapor_pressure(T, *antoine_coeffs2)
-                 P_vp1_atm = kpa_to_atm(P_vp1_kpa)
-                 P_vp2_atm = kpa_to_atm(P_vp2_kpa)
-
-                 bubble_P = x1 * gamma1 * P_vp1_atm + (1 - x1) * gamma2 * P_vp2_atm
-                 return bubble_P - P_atm
-             except:
-                 return np.inf # Return a large value if calculation fails
-
-         # Estimate initial temperature range (between boiling points)
-         T_guess_low = min(kpa_to_atm(10**antoine_coeffs1[0] - antoine_coeffs1[1]/(P_atm + antoine_coeffs1[2])),
-                           kpa_to_atm(10**antoine_coeffs2[0] - antoine_coeffs2[1]/(P_atm + antoine_coeffs2[2]))) # Simplified inverse Antoine
-         T_guess_high = max(kpa_to_atm(10**antoine_coeffs1[0] - antoine_coeffs1[1]/(P_atm + antoine_coeffs1[2])),
-                            kpa_to_atm(10**antoine_coeffs2[0] - antoine_coeffs2[1]/(P_atm + antoine_coeffs2[2]))) # Simplified inverse Antoine
-
-         # Using root_scalar to find the temperature where pressure_difference is zero
-         try:
-             # Adjust bracket based on boiling points at the given pressure if possible
-             # For now, use a wide bracket or initial guess
-             sol = root_scalar(pressure_difference, bracket=[min(bp1, bp2)-20, max(bp1, bp2)+20]) # Using component boiling points as rough guide
-             return sol.root
-         except Exception as e:
-             print(f"Could not find bubble point temperature for x1={x1}, P={P_atm}: {e}")
-             return np.nan
-
-
-     # Calculate the bubble point temperature for the given liquid composition x
-     eq_temp_celsius = bubble_point_temperature(x, P_atm, antoine_coeffs1, antoine_coeffs2,
-                                               gamma1_func=lambda x_comp, T: gamma1, # Pass the specific activity coef value if constant
-                                               gamma2_func=lambda x_comp, T: gamma2) # Pass the specific activity coef value if constant
-
-
-     if np.isnan(eq_temp_celsius):
-         return np.nan # Return NaN if temperature calculation failed
-
-     # Calculate vapor pressure at the equilibrium temperature
-     P_vp1_kpa = antoine_vapor_pressure(eq_temp_celsius, *antoine_coeffs1)
-     P_vp1_atm = kpa_to_atm(P_vp1_kpa)
-
-     # Calculate equilibrium vapor composition using modified Raoult's Law
-     y = (x * gamma1 * P_vp1_atm) / P_atm
-
-     return y
-
-
-# Modify the plot_mccabe_thiele function to use the new equilibrium function
-def plot_mccabe_thiele(antoine_coeffs1, antoine_coeffs2, R, xd, xb, zf, q, F, D, B, P_atm, gamma1=1.0, gamma2=1.0):
-    """
-    Draw a fully labelled McCabe-Thiele diagram using rigorous VLE and return the figure.
-    Uses Antoine equation for vapor pressure and optional activity coefficients.
-    """
-
-    def _equilibrium_vle(x, T_celsius, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1, gamma2):
-         return calculate_vle(x, T_celsius, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1, gamma2)
-
-    def bubble_point_temperature(x1, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1_func=lambda x, T: 1.0, gamma2_func=lambda x, T: 1.0):
-         """
-         Calculates the bubble point temperature (°C) for a given liquid composition and pressure.
-         x1: Liquid mole fraction of component 1
-         P_atm: Total pressure in atm
-         antoine_coeffs1: (A, B, C) for component 1
-         antoine_coeffs2: (A, B, C) for component 2
-         gamma1_func: Function to calculate activity coefficient for component 1 (takes x1, T_celsius)
-         gamma2_func: Function to calculate activity coefficient for component 2 (takes x1, T_celsius)
-         Returns: Bubble point temperature in °C.
-         """
-         def pressure_difference(T):
-             try:
-                 gamma1 = gamma1_func(x1, T)
-                 gamma2 = gamma2_func(1 - x1, T) # Assuming activity coef depends on liquid comp of that component
-
-                 P_vp1_kpa = antoine_vapor_pressure(T, *antoine_coeffs1)
-                 P_vp2_kpa = antoine_vapor_pressure(T, *antoine_coeffs2)
-                 P_vp1_atm = kpa_to_atm(P_vp1_kpa)
-                 P_vp2_atm = kpa_to_atm(P_vp2_kpa)
-
-                 bubble_P = x1 * gamma1 * P_vp1_atm + (1 - x1) * gamma2 * P_vp2_atm
-                 return bubble_P - P_atm
-             except:
-                 return np.inf # Return a large value if calculation fails
-
-         # Estimate initial temperature range (between boiling points)
-         # More robust initial guess might involve solving for T at x=0 and x=1
-         # For now, a simple range or fixed guess might work for many systems
-         # Need to get bp1 and bp2 into this scope or pass them
-         # Assuming bp1 and bp2 are available or can be calculated from Antoine at 1 atm
-         # A more robust approach would be to find the roots of pressure_difference at x1=0 and x1=1
-         try:
-             # Find boiling point of component 1 at P_atm
-             def bp1_eq(T):
-                 P_vp1_kpa = antoine_vapor_pressure(T, *antoine_coeffs1)
-                 return kpa_to_atm(P_vp1_kpa) - P_atm
-             bp1_at_P = root_scalar(bp1_eq, bracket=[0, 300]).root # Assuming reasonable temperature range
-
-             # Find boiling point of component 2 at P_atm
-             def bp2_eq(T):
-                 P_vp2_kpa = antoine_vapor_pressure(T, *antoine_coeffs2)
-                 return kpa_to_atm(P_vp2_kpa) - P_atm
-             bp2_at_P = root_scalar(bp2_eq, bracket=[0, 300]).root # Assuming reasonable temperature range
-
-             T_guess_low = min(bp1_at_P, bp2_at_P) - 10 # Add some buffer
-             T_guess_high = max(bp1_at_P, bp2_at_P) + 10 # Add some buffer
-
-             sol = root_scalar(pressure_difference, bracket=[T_guess_low, T_guess_high])
-             return sol.root
-         except Exception as e:
-             print(f"Could not find bubble point temperature for x1={x1}, P={P_atm} in plot_mccabe_thiele: {e}")
-             return np.nan
-
-
-    # ------- 1) curves -------------------------------------------------
-    x = np.linspace(0, 1, 100) # Reduced points for potentially slower VLE calcs
-    y_eq = []
-    T_eq = []
-    for xi in x:
-        if np.isclose(xi, 0):
-            # Handle x=0 case: equilibrium vapor is pure heavy key
-            y_eq.append(0.0)
-            # Temperature is boiling point of heavy key at P_atm
-            def bp2_eq(T):
-                 P_vp2_kpa = antoine_vapor_pressure(T, *antoine_coeffs2)
-                 return kpa_to_atm(P_vp2_kpa) - P_atm
-            try:
-                T_eq.append(root_scalar(bp2_eq, bracket=[0, 300]).root)
-            except:
-                T_eq.append(np.nan)
-
-        elif np.isclose(xi, 1):
-             # Handle x=1 case: equilibrium vapor is pure light key
-            y_eq.append(1.0)
-            # Temperature is boiling point of light key at P_atm
-            def bp1_eq(T):
-                 P_vp1_kpa = antoine_vapor_pressure(T, *antoine_coeffs1)
-                 return kpa_to_atm(P_vp1_kpa) - P_atm
-            try:
-                T_eq.append(root_scalar(bp1_eq, bracket=[0, 300]).root)
-            except:
-                T_eq.append(np.nan)
-
-        else:
-            # Calculate bubble point temperature for each liquid composition
-            eq_temp_celsius = bubble_point_temperature(xi, P_atm, antoine_coeffs1, antoine_coeffs2,
-                                                       gamma1_func=lambda x_comp, T: gamma1,
-                                                       gamma2_func=lambda x_comp, T: gamma2)
-            T_eq.append(eq_temp_celsius)
-
-            if not np.isnan(eq_temp_celsius):
-                # Calculate equilibrium vapor composition at this temperature
-                y_eq.append(_equilibrium_vle(xi, eq_temp_celsius, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1, gamma2))
-            else:
-                y_eq.append(np.nan) # Append NaN if temperature calculation failed
-
-
-    y_eq = np.array(y_eq)
-    valid_indices = ~np.isnan(y_eq)
-    x = x[valid_indices]
-    y_eq = y_eq[valid_indices]
-
-
-    y_rect = _rectifying(x, R, xd)
-    y_strip = _stripping(x, R, q, F, D, B, xb)
-
-    # q-line intersection with equilibrium
-    qx = np.linspace(0, 1, 2)
-    qy = _q_line(qx, q, zf)
-
-    # ------- 2) staircase construction ---------------------------------
-    stairs_x, stairs_y = [xd], [xd]
-    feed_found = False
-    feed_stage = None
-    n_stages = 0
-
-    x_op, y_op = xd, xd  # start on operating line (xD, xD)
-
-    # Need a way to get equilibrium y for a given x using the rigorous model
-    # This requires finding the bubble point temperature for x and P, then calculating y.
-    # Let's create an interpolation function for the equilibrium curve generated above.
-    from scipy.interpolate import interp1d
-    # Ensure x and y_eq are monotonically increasing for interpolation
-    sort_indices = np.argsort(x)
-    x_sorted = x[sort_indices]
-    y_eq_sorted = y_eq[sort_indices]
-
-    # Handle potential duplicate x values or issues from sorting NaNs if any slipped through
-    unique_x, unique_indices = np.unique(x_sorted, return_index=True)
-    y_eq_unique = y_eq_sorted[unique_indices]
-
-    # If there are still issues with unique points, fall back to a simple connection or error
-    if len(unique_x) < 2:
-         print("Warning: Could not create a valid equilibrium curve for stepping stages.")
-         # Fallback or error handling needed
-         return plt.figure(), plt.gca(), 0, None # Return empty plot or handle appropriately
-
-
-    # Need to handle cases where interpolation might go out of bounds or fail
-    # Use fill_value="extrapolate" with caution or clip x_op
-    # Let's try clipping x_op to the range of unique_x
-    interp_kind = 'linear' # Use linear interpolation for simplicity
-
-    # Need to handle the case where y_eq_unique is not monotonically increasing
-    # if not np.all(np.diff(y_eq_unique) >= 0):
-    #     print("Warning: Equilibrium curve is not monotonically increasing. Interpolation may be inaccurate.")
-        # Could attempt smoothing or other methods, but for now proceed with caution
-
-    try:
-        equilibrium_interp = interp1d(unique_x, y_eq_unique, kind=interp_kind, fill_value="extrapolate")
-    except Exception as e:
-        print(f"Error creating interpolation function: {e}")
-        # Fallback or error handling needed
-        return plt.figure(), plt.gca(), 0, None # Return empty plot or handle appropriately
-
-
-    while x_op > xb and n_stages < 100:
-        # Ensure x_op is within the range of the interpolation data
-        x_op_clipped = np.clip(x_op, unique_x.min(), unique_x.max())
-
-        try:
-            y_eq_pt = equilibrium_interp(x_op_clipped).item() # Use .item() to get scalar from numpy array
-        except Exception as e:
-             print(f"Error during equilibrium interpolation at x_op={x_op}: {e}")
-             break # Break if interpolation fails
-
-        stairs_x.extend([x_op, x_op_clipped]) # Use original x_op for horizontal step start
-        stairs_y.extend([y_op, y_eq_pt])
-
-        # vertical to operating line - need to determine which operating line based on feed stage
-        # This still relies on the q-line intersection to determine the feed stage transition
-        # Need the intersection point of the q-line and rectifying line to switch operating lines.
-
-        # Intersection of q-line (y = q/(q-1) * x - zf/(q-1)) and rectifying line (y = R/(R+1) * x + xd/(R+1))
-        # q/(q-1) * x - zf/(q-1) = R/(R+1) * x + xd/(R+1)
-        # (q/(q-1) - R/(R+1)) * x = xd/(R+1) + zf/(q-1)
-        # x_intersect = (xd/(R+1) + zf/(q-1)) / (q/(q-1) - R/(R+1))
-
-        # Handle q=1 case (vertical q-line at x=zf)
-        if abs(q - 1.0) < 1e-6:
-            x_intersect = zf
-        elif abs((q/(q-1) - R/(R+1))) < 1e-9: # Avoid division by zero if slopes are equal
-             x_intersect = np.nan # Parallel lines, no single intersection point relevant for stage stepping
-        else:
-            x_intersect = (xd/(R+1) + zf/(q-1)) / (q/(q-1) - R/(R+1))
-
-        # Determine which operating line to use
-        if not feed_found and x_op_clipped > x_intersect:
-            # In rectifying section
-            # Find x_next on the rectifying line
-            x_next = (y_eq_pt - xd/(R+1)) * (R+1)/R
-            y_next = _rectifying(x_next, R, xd)
-        else:
-            # In stripping section (or at/below intersection)
-            if not feed_found:
-                feed_found = True
-                feed_stage = n_stages + 1 # Feed is on the first stage below the intersection
-            # Find x_next on the stripping line
-            Lbar = R * D + q * F
-            Vbar = Lbar - B
-            # Avoid division by zero for Vbar
-            if abs(Vbar) < 1e-9:
-                 print("Warning: Vbar is close to zero. Cannot calculate stripping line.")
-                 break # Cannot continue stage stepping
-            x_next = (y_eq_pt + B * xb / Vbar) * Vbar / Lbar
-            y_next = _stripping(x_next, R, q, F, D, B, xb) # Recalculate y_next on the stripping line
-
-
-        stairs_x.extend([x_op_clipped, x_next])
-        stairs_y.extend([y_eq_pt, y_next])
-
-        x_op, y_op = x_next, y_next
-        n_stages += 1
-        if x_op < xb:
-            break
-        if n_stages > 200: # Safety break for complex VLE
-            print("Warning: Reached maximum stages (200). Stopping stage calculation.")
-            break
-
-
-    # ------- 3) plotting ------------------------------------------------
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.plot(x, y_eq, 'b', lw=2, label='Equilibrium (Rigorous VLE)')
-    ax.plot([0, 1], [0, 1], 'k--', lw=0.7)
-
-    # Operating lines
-    ax.plot(np.linspace(x_intersect if not np.isnan(x_intersect) else 0, xd, 100),
-            _rectifying(np.linspace(x_intersect if not np.isnan(x_intersect) else 0, xd, 100), R, xd),
-            'g', lw=2, label='Rectifying')
-
-    # Need to determine the x range for the stripping line plot more accurately
-    # It goes from xb to the intersection point
-    ax.plot(np.linspace(xb, x_intersect if not np.isnan(x_intersect) else 1, 100),
-            _stripping(np.linspace(xb, x_intersect if not np.isnan(x_intersect) else 1, 100), R, q, F, D, B, xb),
-            'r', lw=2, label='Stripping')
-
-
-    # q-line
-    if abs(q - 1.0) < 1e-6: # Handle q = 1 (saturated liquid)
-        ax.axvline(x=zf, color='m', linestyle='--', lw=2, label='q-line')
-    elif abs(q - 1.0) > 1e-3:
-        ax.plot(qx, qy, 'm--', lw=2, label='q-line')
-
-
-    # staircase
-    ax.plot(stairs_x, stairs_y, 'o-', color='orange', markersize=4,
-            label='Stages')
-
-    # highlight feed stage
-    if feed_stage is not None and feed_stage * 4 < len(stairs_x): # Ensure index is valid
-        idx = feed_stage * 4 # Indexing into the flattened stairs_x/y list (x0, y0, x1, y1, x2, y2...)
-        # Need to check if this index is correct for the stage transition point
-        # The staircase is xd, y_eq_xd, x_op1, y_op1, x_op1, y_eq_op1, x_op2, y_op2...
-        # Stage 1 is (xd, y_eq_xd) to (x_op1, y_op1)
-        # Stage i is (x_opi-1, y_eq_opi-1) to (x_opi, y_opi)
-        # The points on the equilibrium curve are at indices 1, 5, 9, ... (4i - 3)
-        # The points on the operating line are at indices 3, 7, 11, ... (4i - 1)
-        # The feed stage transition happens *after* a point on the equilibrium curve (y_eq_pt)
-        # and *before* the next point on the operating line (y_next).
-        # The x value where the transition happens is x_op_clipped (or x_op if not clipped)
-        # The y value where the transition happens is y_eq_pt
-        # The feed stage is the stage *below* the feed point.
-        # If feed_stage is n, the feed point is between stage n and n-1.
-        # The staircase point *before* the feed stage transition is the point on the equilibrium curve.
-        # The index of this point in stairs_x/y is 4 * (feed_stage - 1) + 1
-        # Let's try plotting the point on the equilibrium curve just before the feed stage transition.
-        # This assumes feed_stage is 1-indexed number of stages above the feed.
-        # If feed_stage is the stage *where* the feed enters, then it's the point *on* that stage.
-        # Based on the calculation `feed_stage = n_stages + 1`, it seems `n_stages` is the number of stages *above* the feed.
-        # So feed stage is the (n_stages + 1)-th stage from the top.
-        # The point on the equilibrium curve for stage n is at index 4*(n-1)+1 in stairs_x/y
-        # So for feed stage (n_stages+1), the point is at index 4*(n_stages)+1
-        # Let's use the calculated intersection point (x_intersect, y_intersect_rect) to highlight the feed location on the plot instead.
-        if not np.isnan(x_intersect):
-            y_intersect_rect = _rectifying(x_intersect, R, xd)
-            ax.scatter(x_intersect, y_intersect_rect, color='purple',
-                       s=80, zorder=5, label=f'Feed Intersection (x={x_intersect:.2f})')
-        else:
-             print("Warning: Could not plot feed intersection point due to invalid calculation.")
-
-
-    # stage numbers (every 2nd point on equilibrium curve)
-    # Stage numbers are 1-indexed from the top.
-    # The equilibrium points are at indices 1, 5, 9, ... (4*i - 3) for stage i
-    for i in range(1, n_stages + 1):
-        idx = 4 * (i-1) + 1 # Index of the point on the equilibrium curve for stage i
-        if idx < len(stairs_x):
-            # Position the text near the step
-             text_x = stairs_x[idx]
-             text_y = stairs_y[idx]
-             # Adjust text position slightly for better readability
-             ax.text(text_x + 0.01, text_y + 0.01, str(i),
-                    fontsize=9, color='navy')
-
-
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.set_xlabel('Liquid mole fraction (light key)')
-    ax.set_ylabel('Vapor mole fraction (light key)')
-    ax.set_title('McCabe-Thiele Diagram (Rigorous VLE)')
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    return fig, n_stages, feed_stage # feed_stage from staircase construction is approximate
-
-
-def calculate_feed_stage(antoine_coeffs1, antoine_coeffs2, R, xd, xb, zf, q, F_mol, D, B, P_atm, gamma1=1.0, gamma2=1.0):
-    """
-    Calculates the estimated feed stage based on the intersection of the
-    q-line and the rigorous operating lines.
-    """
-    # Calculate intersection of q-line and rectifying line
-    # q-line: y = q/(q-1) * x - zf/(q-1)
-    # Rectifying line: y = R/(R+1) * x + xd/(R+1)
-
-    # Handle q=1 case (vertical q-line at x=zf)
-    if abs(q - 1.0) < 1e-6:
-        x_feed_intersect = zf
-    elif abs((q/(q-1) - R/(R+1))) < 1e-9: # Avoid division by zero if slopes are equal
-         x_feed_intersect = np.nan # Parallel lines
+    # Average molecular weight of feed
+    mw_feed = feed_comp * mw1 + (1 - feed_comp) * mw2
+    # Feed flow rate in mol/hr
+    F_mol = feed_rate * 1000 / mw_feed # Convert kg to g and divide by g/mol
+
+    # Overall material balance: F = D + B (in moles)
+    # Component material balance (light key): F * zf = D * xd + B * xb
+    # Substitute B = F - D into the component balance:
+    # F * zf = D * xd + (F - D) * xb
+    # F * zf = D * xd + F * xb - D * xb
+    # F * zf - F * xb = D * xd - D * xb
+    # F * (zf - xb) = D * (xd - xb)
+    # D = F * (zf - xb) / (xd - xb)
+
+    # Avoid division by zero or near-zero if product compositions are too close
+    if abs(xd - xb) < 1e-9:
+        # This indicates no separation is possible or compositions are invalid
+        D = 0.0
+        B = F_mol
+        print("Warning: Distillate and bottoms compositions are too close. Cannot calculate material balance.")
     else:
-        try:
-            # Solving q/(q-1) * x - zf/(q-1) = R/(R+1) * x + xd/(R+1) for x
-            # x * (q/(q-1) - R/(R+1)) = xd/(R+1) + zf/(q-1)
-            x_feed_intersect = (xd/(R+1) + zf/(q-1)) / (q/(q-1) - R/(R+1))
-        except Exception as e:
-            print(f"Error calculating q-line/rectifying line intersection: {e}")
-            x_feed_intersect = np.nan
+        D = F_mol * (feed_comp - xb) / (xd - xb)
+        B = F_mol - D
+
+    # Ensure D and B are not negative due to floating point errors or invalid inputs
+    D = max(0.0, D)
+    B = max(0.0, B)
+    # Re-normalize B to ensure total flow is conserved if D was capped
+    if D == 0.0:
+        B = F_mol
 
 
-    if np.isnan(x_feed_intersect):
-        return None # Cannot determine feed stage if intersection is undefined
+    return D, B, F_mol
 
-    # Now, find the stage on the McCabe-Thiele diagram where the liquid composition
-    # crosses this intersection x-coordinate.
-    # This requires performing the stage-by-stage calculation and checking where the liquid x
-    # goes from > x_feed_intersect to <= x_feed_intersect.
+def calculate_minimum_reflux_ratio(alpha, feed_comp, q_value):
+    """
+    Calculates minimum reflux ratio (Rmin) using the Underwood equation (simplified for binary).
+    alpha: Average relative volatility
+    feed_comp: Mole fraction of light key in feed (zf)
+    q_value: Feed thermal condition parameter
+    Returns: Minimum reflux ratio (Rmin)
+    """
+    # Simplified Underwood equation for binary systems assuming constant alpha
+    # Requires solving for a root theta between alpha_n+1 and alpha_n (here, 1 and alpha)
+    # such that sum(alpha_i * z_i / (alpha_i - theta)) = 1 - q
+    # For binary: z1 / (alpha - theta) + z2 / (1 - theta) = 1 - q
+    # zf / (alpha - theta) + (1 - zf) / (1 - theta) = 1 - q
 
-    # Recalculate stages with the rigorous VLE
-    # Need the stage calculation function to be compatible with rigorous VLE
+    # This requires finding the root theta. A simpler approximation for binary is often used:
+    # Rmin = (xd / (alpha - 1)) - (xb / (alpha - 1))  # Fenske-Underwood for minimum stages (infinite reflux)
+    # This doesn't explicitly use q.
 
-    def calculate_stages_rigorous(xd, xb, zf, q, R, F_mol, D, B, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1=1.0, gamma2=1.0):
-        """
-        Calculates theoretical stages using rigorous VLE for McCabe-Thiele.
-        Returns: x_stages, y_stages, number of stages, and estimated feed stage.
-        """
-        def _equilibrium_rigorous(x):
-             # Find bubble point temperature for liquid composition x
-             eq_temp_celsius = bubble_point_temperature(x, P_atm, antoine_coeffs1, antoine_coeffs2,
-                                                       gamma1_func=lambda x_comp, T: gamma1,
-                                                       gamma2_func=lambda x_comp, T: gamma2)
-             if np.isnan(eq_temp_celsius):
-                 return np.nan # Return NaN if temperature calculation failed
+    # A more direct approach for Rmin using the q-line and equilibrium curve intersection:
+    # Find the intersection point (x_intersect, y_intersect) of the q-line (y = q/(q-1) * x - zf/(q-1))
+    # and the equilibrium curve (y = alpha*x / (1 + (alpha-1)*x)).
+    # Rmin = (xd - y_intersect) / (y_intersect - x_intersect)
 
-             # Calculate equilibrium vapor composition at this temperature
-             return calculate_vle(x, eq_temp_celsius, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1, gamma2)
+    # Let's use the analytical solution for the intersection of the q-line and the equilibrium curve (assuming constant alpha):
+    # y = alpha * x / (1 + (alpha - 1) * x)  (Equilibrium curve)
+    # y = (q / (q - 1)) * x - (zf / (q - 1)) (q-line)
 
-        def _rectifying_line_func(x):
-            return R/(R+1) * x + xd/(R+1)
+    # Solve for x at the intersection:
+    # alpha * x / (1 + (alpha - 1) * x) = (q / (q - 1)) * x - (zf / (q - 1))
 
-        def _stripping_line_func(x):
-            L_bar = R * D + q * F_mol
-            V_bar = L_bar - B
-            # Avoid division by zero for V_bar
-            if abs(V_bar) < 1e-9:
-                 print("Warning: Vbar is close to zero in stage calculation. Cannot calculate stripping line.")
-                 return np.full_like(x, np.nan)
-            return (L_bar / V_bar) * x - (B * xb) / V_bar
+    # Case 1: q = 1 (saturated liquid feed), vertical q-line x = zf
+    if abs(q - 1.0) < 1e-9:
+        x_intersect = feed_comp
+        # Find y_intersect on the equilibrium curve at x = zf
+        y_intersect = alpha * x_intersect / (1 + (alpha - 1) * x_intersect)
+        # Rmin = (xd - y_intersect) / (y_intersect - x_intersect)
+        # Avoid division by zero if y_intersect == x_intersect (azeotrope at feed comp)
+        if abs(y_intersect - x_intersect) < 1e-9:
+             Rmin = float('inf') # Infinite reflux needed if azeotrope at feed
+        else:
+            Rmin = (xd - y_intersect) / (y_intersect - x_intersect)
 
-        x_stages = [xd]
-        y_stages = [xd]
-        x_current = xd
-        stage_count = 0
-        feed_stage_est = None # Estimated feed stage based on intersection
+    # Case 2: q != 1
+    else:
+        # Solve the quadratic equation for x at the intersection.
+        # Rearranging the equation:
+        # alpha * x = ((q / (q - 1)) * x - (zf / (q - 1))) * (1 + (alpha - 1) * x)
+        # alpha * x = (q / (q - 1)) * x + (q / (q - 1)) * (alpha - 1) * x^2 - (zf / (q - 1)) - (zf / (q - 1)) * (alpha - 1) * x
+        # 0 = (q / (q - 1)) * (alpha - 1) * x^2 + (q / (q - 1) - (zf / (q - 1)) * (alpha - 1) - alpha) * x - (zf / (q - 1))
 
-        # Calculate intersection point for switching operating lines
-        # This is the same x_feed_intersect calculated earlier
-        # Need the corresponding y value on the rectifying line at this x
-        y_feed_intersect_rect = _rectifying_line_func(x_feed_intersect) if not np.isnan(x_feed_intersect) else np.nan
+        # Let A = (q / (q - 1)) * (alpha - 1)
+        # Let B = (q / (q - 1)) - (zf / (q - 1)) * (alpha - 1) - alpha
+        # Let C = - (zf / (q - 1))
+
+        # Handle potential division by zero if alpha = 1 (no separation) or q = 1 (handled above)
+        if abs(alpha - 1.0) < 1e-9:
+             Rmin = float('inf') # Infinite reflux if no separation
+
+        else:
+            A = (q / (q - 1.0)) * (alpha - 1.0)
+            B = (q / (q - 1.0)) - (zf / (q - 1.0)) * (alpha - 1.0) - alpha
+            C = - (zf / (q - 1.0))
+
+            # Quadratic formula: x = (-B ± sqrt(B^2 - 4AC)) / (2A)
+            discriminant = B**2 - 4 * A * C
+
+            if discriminant < 0:
+                # No real intersection point, likely indicates an issue with inputs (e.g., compositions not achievable)
+                print("Warning: No real intersection found for q-line and equilibrium curve. Check inputs.")
+                Rmin = float('inf') # Or handle as an error
+            else:
+                sqrt_discriminant = np.sqrt(discriminant)
+                x_intersect1 = (-B + sqrt_discriminant) / (2 * A)
+                x_intersect2 = (-B - sqrt_discriminant) / (2 * A)
+
+                # The relevant intersection point is typically between xb and xd
+                # Also, it should be on the correct side of the feed composition zf based on q.
+                # For a typical distillation, the intersection is between zf and xd if q <= 1,
+                # or between xb and zf if q > 1.
+                # Let's choose the root that is between xb and xd and is the smaller root if both are in that range.
+                valid_roots = [x for x in [x_intersect1, x_intersect2] if xb <= x <= xd + 1e-9] # Add tolerance
+
+                if not valid_roots:
+                     # No valid intersection in the desired range
+                     print("Warning: No valid intersection found between xb and xd. Check inputs.")
+                     Rmin = float('inf') # Or handle as an error
+                else:
+                    # Choose the root closest to zf or the one that makes sense physically
+                    # For typical operation, the intersection point is where the q-line hits the equilibrium curve
+                    # between the bottoms and distillate compositions.
+                    # Let's assume the smaller valid root is the correct intersection point.
+                    x_intersect = min(valid_roots)
+
+                    # Find y_intersect on the equilibrium curve at x_intersect
+                    y_intersect = alpha * x_intersect / (1 + (alpha - 1) * x_intersect)
+
+                    # Calculate Rmin using the intersection point
+                    # Rmin = (xd - y_intersect) / (y_intersect - x_intersect)
+                    # Avoid division by zero if y_intersect == x_intersect
+                    if abs(y_intersect - x_intersect) < 1e-9:
+                        Rmin = float('inf') # Infinite reflux if azeotrope at intersection
+                    else:
+                        Rmin = (xd - y_intersect) / (y_intersect - x_intersect)
 
 
-        while x_current > xb and stage_count < 200: # Safety break
-            y_eq = _equilibrium_rigorous(x_current)
+    # Ensure Rmin is not negative (can happen with unfavorable VLE or inputs)
+    # If Rmin is calculated as negative, it usually indicates that the desired separation
+    # is not possible even at minimum reflux, or there's an issue with the alpha or compositions.
+    # In a practical sense, Rmin cannot be negative. A negative Rmin might suggest
+    # an error in the calculation or inputs. Let's cap it at a small positive value or report an error.
+    if Rmin < 0:
+        print(f"Warning: Calculated Rmin is negative ({Rmin:.2f}). This may indicate infeasible separation or calculation error. Capping Rmin at a small positive value.")
+        Rmin = 1e-9 # Cap at a small positive value
 
-            if np.isnan(y_eq):
-                 print(f"Warning: Equilibrium calculation failed at x={x_current:.2f}. Stopping stage calculation.")
-                 break
+    return Rmin
 
-            x_stages.append(x_current)
-            y_stages.append(y_eq)
 
-            # Determine which operating line to step down to
-            # Switch from rectifying to stripping when y_eq <= y_feed_intersect_rect AND liquid x_current <= x_feed_intersect
-            # This condition for switching needs careful consideration based on the q-line
-            # A simpler approach for stepping is to switch when the current liquid composition x_current
-            # is less than or equal to the feed composition zf, and the stage number is >= the estimated feed stage number from intersection.
-            # However, the McCabe-Thiele stepping logic is based on which side of the q-line the equilibrium point lies.
-            # Let's stick to the logic based on the q-line intersection with the operating lines.
-            # The feed stage is where the liquid on the stage has a composition x such that
-            # the equilibrium vapor y is on the stripping line, and the stage above had an equilibrium vapor y
-            # that was on the rectifying line.
+def calculate_actual_reflux_ratio(Rmin, rr_mult):
+    """
+    Calculates actual reflux ratio based on minimum reflux ratio and a multiplier.
+    Rmin: Minimum reflux ratio
+    rr_mult: Reflux ratio multiplier (R/Rmin)
+    Returns: Actual reflux ratio (R)
+    """
+    if Rmin == float('inf'):
+        return float('inf') # If minimum reflux is infinite, actual reflux is also infinite
+    return Rmin * rr_mult
 
-            # Let's use the feed composition zf and q-line to determine the section switch for stepping.
-            # The switch happens when the equilibrium point (x_current, y_eq) crosses the q-line.
-            # The q-line equation: y = q/(q-1) * x - zf/(q-1)
+def calculate_minimum_stages(xd, xb, alpha):
+    """
+    Calculates minimum number of theoretical stages (Nmin) using the Fenske equation.
+    xd: Mole fraction of light key in distillate
+    xb: Mole fraction of light key in bottoms
+    alpha: Average relative volatility
+    Returns: Minimum number of theoretical stages (Nmin)
+    """
+    # Fenske equation: Nmin = log((xd/(1-xd)) * ((1-xb)/xb)) / log(alpha)
+    # Avoid log(0) or log(negative)
+    if xb <= 0 or xd >= 1 or alpha <= 1:
+        return float('inf') # Infinite stages needed if separation is impossible or alpha <= 1
+    try:
+        nmin = np.log((xd / (1 - xd)) * ((1 - xb) / xb)) / np.log(alpha)
+        # Nmin must be positive. If negative, it might indicate inputs where xb > xd.
+        return max(0.0, nmin)
+    except Exception as e:
+        print(f"Error calculating minimum stages: {e}")
+        return float('inf')
 
-            # Handle q=1 case separately for the q-line check
-            if abs(q - 1.0) < 1e-6: # Saturated liquid feed, vertical q-line at x = zf
-                 on_stripping_side = (x_current <= zf)
-            elif abs(q - 0.0) < 1e-6: # Saturated vapor feed, horizontal q-line at y = zf
-                 on_stripping_side = (y_eq <= zf)
-            elif abs(q - 1.0) > 1e-3: # Other feed conditions
+
+def calculate_actual_stages(Nmin, R, Rmin):
+    """
+    Calculates actual number of theoretical stages using the Gilliland correlation.
+    Nmin: Minimum number of theoretical stages
+    R: Actual reflux ratio
+    Rmin: Minimum reflux ratio
+    Returns: Actual number of theoretical stages
+    """
+    # Gilliland correlation is an empirical correlation between N/Nmin and (R-Rmin)/(R+1)
+    # The correlation is typically presented as a graph or fitted equation.
+    # A common form of the fitted equation is:
+    # (N - Nmin) / (N + 1) = 0.75 * ((R - Rmin) / (R + 1))**0.566
+    # We need to solve for N.
+
+    # Handle edge cases:
+    if Rmin < 0 or R <= Rmin or Nmin <= 0: # Gilliland correlation requires R > Rmin and Nmin > 0
+        return float('inf')
+    if Rmin == float('inf') or R == float('inf') or Nmin == float('inf'):
+         return float('inf')
+
+
+    # Calculate the correlation parameter X = (R - Rmin) / (R + 1)
+    X = (R - Rmin) / (R + 1)
+
+    # Ensure X is within the valid range for the correlation (0 < X < 1)
+    # Due to floating point, X might be slightly negative if R is very close to Rmin. Cap it at 0.
+    X = max(0.0, X)
+    if X >= 1.0: # Should not happen if R > Rmin
+         X = 0.999999 # Cap at a value slightly less than 1
+
+    # Use a common fit for the Gilliland correlation: (N - Nmin) / (N + 1) = f(X)
+    # f(X) = 1 - exp((1 + 5*X) / (11*X) * (X - 1))  # Another form
+    # A simpler polynomial fit (valid for 0.01 < X < 0.9):
+    # Y = (N - Nmin) / (N + 1)
+    # Y ≈ 0.75 - 0.75 * X**0.566  (Rough approximation)
+
+    # Let's use a commonly cited empirical equation form:
+    # (N - Nmin) / (N + 1) = 0.756 - 0.756 * X**0.566
+    # (N - Nmin) = (0.756 - 0.756 * X**0.566) * (N + 1)
+    # N - Nmin = 0.756*N + 0.756 - 0.756*X**0.566*N - 0.756*X**0.566
+    # N - 0.756*N + 0.756*X**0.566*N = Nmin + 0.756 - 0.756*X**0.566
+    # N * (1 - 0.756 + 0.756*X**0.566) = Nmin + 0.756 - 0.756*X**0.566
+    # N * (0.244 + 0.756*X**0.566) = Nmin + 0.756 * (1 - X**0.566)
+    # N = (Nmin + 0.756 * (1 - X**0.566)) / (0.244 + 0.756*X**0.566)
+
+    # A more common form of fit is:
+    # Y = (N - Nmin) / (N + 1)
+    # X = (R - Rmin) / (R + 1)
+    # Y = 1 - exp( (1 + 5*X) / (11*X) * (X - 1) )
+    # Y = 0.2417 - 0.2335*X + 0.1307*X**2 - 0.0142*X**3 + 0.0019*X**4 # Fit from a source
+
+    # Let's use a simpler, commonly cited correlation equation form:
+    # (N - Nmin) / (N + 1) = f(X)
+    # Where f(X) is some empirical function. A simple fit is:
+    # Y = 0.206 + log10(X) * (0.675 + 0.206 * log10(X)) # Valid for 0.01 < X < 0.9
+
+    # Let's use a straightforward polynomial fit for Y = (N - Nmin) / (N + 1) vs X = (R - Rmin) / (R + 1)
+    # from a common reference (e.g., Perry's Handbook or separation process textbooks).
+    # A simple piecewise linear approximation or a polynomial fit can be used.
+    # Let's use a common polynomial approximation:
+    # Y = 0.5458 - 0.1173*X + 0.0324*X**2 + 0.0015*X**3 - 0.0019*X**4
+
+    # Y values for common X values:
+    # X=0.01, Y=0.16
+    # X=0.02, Y=0.23
+    # X=0.05, Y=0.33
+    # X=0.1,  Y=0.43
+    # X=0.2,  Y=0.55
+    # X=0.4,  Y=0.7
+    # X=0.6,  Y=0.8
+    # X=0.8,  Y=0.9
+
+    # Let's use a common explicit equation form from textbooks:
+    # N / Nmin = 1 + 0.545 * ((R - Rmin) / (R + 1))**0.566 / (1 - (R - Rmin) / (R + 1))
+    # This also seems complex to rearrange for N.
+
+    # Back to the form (N - Nmin) / (N + 1) = Y
+    # N - Nmin = Y * (N + 1) = Y*N + Y
+    # N - Y*N = Nmin + Y
+    # N * (1 - Y) = Nmin + Y
+    # N = (Nmin + Y) / (1 - Y)
+
+    # Let's use a simple polynomial fit for Y = f(X):
+    # Y = 0.2417 - 0.2335*X + 0.1307*X**2 - 0.0142*X**3 + 0.0019*X**4  (Valid for 0.01 < X < 0.9)
+    # If X is outside this range, the correlation might not be accurate.
+
+    # Let's use the common graphical correlation translated to an equation form.
+    # A frequently cited correlation is from Kirkbride:
+    # N_rect / N_strip = (xb / xd)**alpha_avg * (B / D)  # This is for feed stage location, not total stages.
+
+    # Let's use the form: (N - Nmin) / (N + 1) = f(X)
+    # Where X = (R - Rmin) / (R + 1)
+    # Let's use a fit provided in some chemical engineering resources:
+    # Y = 1 - exp((1 + 5*X) / (11*X) * (X - 1))  # This is a bit complex.
+
+    # Let's use a simpler polynomial fit for Y:
+    # If X <= 0.9: Y = 0.5458 - 0.1173*X + 0.0324*X**2 + 0.0015*X**3 - 0.0019*X**4
+    # If X > 0.9: Y = 1.0 # As X approaches 1, N approaches infinity, (N-Nmin)/(N+1) approaches 1.
+
+    # Let's use a widely accepted fit from Treybal, Mass-Transfer Operations, 3rd ed., p. 182:
+    # For (R-Rmin)/(R+1) from 0 to 1:
+    # Y = (N-Nmin)/(N+1)
+    # X = (R-Rmin)/(R+1)
+    # Data points for Y vs X:
+    # (0, 0), (0.01, 0.16), (0.02, 0.23), (0.05, 0.33), (0.1, 0.43), (0.2, 0.55), (0.4, 0.70), (0.6, 0.80), (0.8, 0.90), (1.0, 1.0)
+    # A polynomial fit to this data might be:
+    # Y ≈ 0.2417 - 0.2335*X + 0.1307*X^2 - 0.0142*X^3 + 0.0019*X^4  (This fit is for X from 0.01 to 0.9)
+
+    # Let's use a simpler approximate formula often used:
+    # N = Nmin + Rmin / (R - Rmin) * f(R/Rmin)  # Not standard Gilliland
+
+    # Let's go back to the form N = (Nmin + Y) / (1 - Y) and calculate Y from X using a simple approximation or lookup.
+    # For simplicity, let's use a linear interpolation between a few points or a simple curve fit.
+    # A simple empirical fit often cited is:
+    # N/Nmin = f((R-Rmin)/(R+1))
+    # Let's use the explicit form if possible.
+    # N = Nmin + (Rmin / (R - Rmin)) * function_of_R_Rmin_ratio
+
+    # Let's use the direct fit for Y vs X and then solve for N:
+    # Y = 0.5458 - 0.1173*X + 0.0324*X**2 + 0.0015*X**3 - 0.0019*X**4  (Example fit)
+
+    # Calculate X
+    X = (R - Rmin) / (R + 1)
+
+    # Ensure X is in a valid range for the correlation (e.g., 0 to ~0.9)
+    if X < 0: X = 0 # Should not happen if R > Rmin
+    if X > 0.95: X = 0.95 # Cap X at a reasonable value to avoid extrapolation issues
+
+    # Calculate Y using a simple polynomial approximation (example fit):
+    Y = 0.5458 - 0.1173*X + 0.0324*X**2 + 0.0015*X**3 - 0.0019*X**4
+
+    # Ensure Y is not too close to 1 to avoid division by zero or large N
+    if Y >= 0.99: Y = 0.99
+
+    # Solve for N: N = (Nmin + Y) / (1 - Y)
+    # Avoid division by zero if Y is close to 1
+    if abs(1 - Y) < 1e-9:
+         N = float('inf')
+    else:
+        N = (Nmin + Y) / (1 - Y)
+
+    # The number of stages must be at least Nmin.
+    # Also, the number of stages must be a positive integer. Round up to the nearest integer.
+    if Nmin > 0:
+         return max(Nmin, np.ceil(N))
+    else:
+         # If Nmin is 0 or negative, Gilliland is not applicable in the standard way.
+         # This scenario should ideally be caught earlier (Nmin <= 0 check).
+         # If we reach here and Nmin <= 0, return infinity or handle as error.
+         return float('inf') # Or raise an error
+
+
+def _rectifying(x, R, xd):
+    """
+    Calculates the y-coordinate on the rectifying operating line for a given x.
+    """
+    # y = (R / (R + 1)) * x + (xd / (R + 1))
+    # Avoid division by zero if R is negative or R+1 is zero (should not happen with R >= Rmin >= 0)
+    if R + 1 <= 0:
+        return np.full_like(x, np.nan) # Return NaN if denominator is invalid
+    return (R / (R + 1)) * x + (xd / (R + 1))
+
+def _stripping(x, R, q, F, D, B, xb):
+    """
+    Calculates the y-coordinate on the stripping operating line for a given x.
+    """
+    # L_bar = R * D + q * F
+    # V_bar = L_bar - B
+    # y = (L_bar / V_bar) * x - (B * xb) / V_bar
+
+    # Calculate L_bar and V_bar based on molar flows
+    L_bar = R * D + q * F # Molar flow in stripping section liquid
+    V_bar = L_bar - B     # Molar flow in stripping section vapor
+
+    # Avoid division by zero if V_bar is zero or close to zero
+    if abs(V_bar) < 1e-9:
+         return np.full_like(x, np.nan) # Return NaN if denominator is invalid
+
+    return (L_bar / V_bar) * x - (B * xb) / V_bar
+
+def _q_line(x, q, zf):
+    """
+    Calculates the y-coordinate on the q-line for a given x.
+    """
+    # y = (q / (q - 1)) * x - (zf / (q - 1))
+    # Handle q = 1 separately (vertical line at x = zf)
+    if abs(q - 1.0) < 1e-9:
+        # For q=1, the q-line is vertical at x=zf. The y value is undefined in the standard equation form.
+        # This function is typically used to plot the line, not find a specific y for a given x unless x=zf.
+        # For plotting purposes, if x == zf, any y value on the plot range (0 to 1) is on the line.
+        # If x != zf, it's not on the line.
+        # For plotting, we can return a line segment at x=zf.
+        # This function is called with an array of x values for plotting.
+        # Let's return NaN for all x except zf, which is not directly useful for plotting a line.
+        # A better approach for plotting the q-line when q=1 is to use ax.axvline(x=zf).
+        # If this function is strictly for calculating points on the line for a given x,
+        # and q=1, it implies the line is vertical at zf. If the input x is zf, any y is on the line.
+        # If the input x is not zf, no y exists on the line.
+        # Given how this is used in plot_mccabe_thiele with np.linspace(0, 1, 2),
+        # this function is for drawing the line segment.
+        # Let's return a line segment from (zf, 0) to (zf, 1) if q=1.
+        # But the expected output is a y value for input x.
+        # This function should probably not be called with np.linspace(0,1,2) when q=1.
+        # Let's modify plot_mccabe_thiele to handle q=1 plotting separately.
+        # For now, if q=1, return NaN for the standard formula, which will be handled by plotting.
+        return np.full_like(x, np.nan)
+
+    # Avoid division by zero if q is close to 1
+    if abs(q - 1.0) < 1e-9:
+         return np.full_like(x, np.nan) # Return NaN if denominator is invalid
+
+    return (q / (q - 1.0)) * x - (zf / (q - 1.0))
+
+def calculate_energy_and_cost(D, R, feed_comp, q_value, F_mol, mw1, mw2, xd, xb, n_stages, bp1, bp2, energy_cost_per_kwh, tower_cost_mult, condenser_cost_mult, reboiler_cost_mult):
+    """
+    Calculates energy consumption and equipment costs with customizable cost parameters.
+    Note: This uses simplified energy calculations based on Trouton's rule at normal boiling points.
+    A more rigorous approach would use enthalpies from the VLE model.
+    """
+    # Estimate average latent heat of vaporization using Trouton's rule at normal boiling points
+    # This is a simplification. Rigorous calculation would use enthalpy from the VLE model
+    # at the actual temperatures and compositions in the condenser and reboiler.
+    Tb1 = bp1 + 273.15 # K
+    Tb2 = bp2 + 273.15 # K
+    # Use a weighted average based on feed composition (simplification)
+    # A better approach might use compositions in the condenser (xd) and reboiler (xb)
+    avg_dH_vap_feed = feed_comp * (88 * Tb1) + (1 - feed_comp) * (88 * Tb2)  # J/mol
+    # Let's use a weighted average based on distillate and bottoms compositions as a slightly better estimate
+    avg_dH_vap_condenser = xd * (88 * Tb1) + (1 - xd) * (88 * Tb2) # J/mol (at dew point of vapor)
+    avg_dH_vap_reboiler = xb * (88 * Tb1) + (1 - xb) * (88 * Tb2) # J/mol (at bubble point of liquid)
+
+    # Simplified approach: use average of condenser and reboiler estimated dH_vap
+    avg_dH_vap = (avg_dH_vap_condenser + avg_dH_vap_reboiler) / 2.0
+
+
+    # Vapor flow rate in rectifying section (mol/hr)
+    V = (R + 1) * D
+    # Vapor flow rate in stripping section (mol/hr)
+    # V_bar = V - (1 - q) * F_mol # Alternate definition from q-line derivation
+    L_bar = R * D + q * F_mol # Molar liquid flow in stripping section
+    V_bar = L_bar - B         # Molar vapor flow in stripping section
+
+    # Energy duties (kWh)
+    # Q_cond = V * avg_dH_vap / 3.6e6  # Using V_rect and average dH_vap
+    # Q_reb = V_bar * avg_dH_vap / 3.6e6 # Using V_strip and average dH_vap
+
+    # More accurately, use dH_vap at condenser/reboiler conditions
+    Q_cond = V * avg_dH_vap_condenser / 3.6e6  # kWh
+    Q_reb = V_bar * avg_dH_vap_reboiler / 3.6e6 # kWh
+
+
+    # Equipment cost estimation (simplified power-law models - need to check units and basis)
+    # Base costs and exponents are illustrative and would come from cost correlations.
+    # Assume costs are in USD.
+    # Tower cost often depends on diameter and height (related to number of stages).
+    # A very simplified model based on stages: Cost ~ Stages^exponent
+    # Condenser/Reboiler cost often depends on heat duty: Cost ~ Duty^exponent
+
+    # Illustrative base costs (USD) and exponents:
+    BASE_TOWER_COST = 15000  # Illustrative cost for a small tower
+    TOWER_STAGE_EXP = 0.8    # Exponent for number of stages
+    BASE_CONDENSER_COST = 5000 # Illustrative cost
+    CONDENSER_DUTY_EXP = 0.65  # Exponent for duty
+    BASE_REBOILER_COST = 6000  # Illustrative cost
+    REBOILER_DUTY_EXP = 0.7    # Exponent for duty
+
+    tower_cost = tower_cost_mult * BASE_TOWER_COST * (n_stages ** TOWER_STAGE_EXP) if n_stages > 0 else 0
+    condenser_cost = condenser_cost_mult * BASE_CONDENSER_COST * (Q_cond ** CONDENSER_DUTY_EXP) if Q_cond > 0 else 0
+    reboiler_cost = reboiler_cost_mult * BASE_REBOILER_COST * (Q_reb ** REBOILER_DUTY_EXP) if Q_reb > 0 else 0
+
+    total_equip_cost = tower_cost + condenser_cost + reboiler_cost
+
+    # Energy cost ($/hr)
+    energy_cost_hr = (Q_cond + Q_reb) * energy_cost_per_kwh
+
+    # Cost per kg of distillate ($/kg)
+    distillate_kg = D * (xd * mw1 + (1 - xd) * mw2) / 1000.0  # kg/hr
+    cost_per_kg = energy_cost_hr / distillate_kg if distillate_kg > 1e-9 else 0 # Avoid division by very small numbers
+
+
+    return Q_cond, Q_reb, total_equip_cost, energy_cost_hr, cost_per_kg, tower_cost, condenser_cost, reboiler_cost
+
+
+def calculate_feed_stage(alpha, R, xd, xb, zf, q, F_mol, D, B):
+    """
+    Calculates the estimated optimal feed stage location based on the intersection of
+    operating lines and the q-line (assuming constant alpha for this estimation).
+    Returns: Estimated feed stage number (1-indexed from the top, condenser=stage 1).
+             Returns None if calculation is not possible or intersection is outside bounds.
+    """
+    # The feed stage is where the q-line intersects the equilibrium curve, and the operating lines intersect.
+    # The intersection point (x_intersect, y_intersect) is calculated by solving the q-line equation
+    # and either the rectifying or stripping line equation. Using the intersection of the two operating lines is common.
+
+    # Rectifying line: y = (R / (R + 1)) * x + (xd / (R + 1))
+    # Stripping line: y = (L_bar / V_bar) * x - (B * xb) / V_bar
+    # L_bar = R*D + q*F_mol
+    # V_bar = L_bar - B
+
+    # Intersection of the two operating lines:
+    # (R / (R + 1)) * x + (xd / (R + 1)) = (L_bar / V_bar) * x - (B * xb) / V_bar
+    # (R / (R + 1) - L_bar / V_bar) * x = - (B * xb) / V_bar - (xd / (R + 1))
+    # x_intersect = (- (B * xb) / V_bar - (xd / (R + 1))) / (R / (R + 1) - L_bar / V_bar)
+
+    # Handle potential division by zero
+    V_bar = (R * D + q * F_mol) - B
+    if abs(R + 1) < 1e-9 or abs(V_bar) < 1e-9 or abs(R / (R + 1) - (L_bar / V_bar)) < 1e-9:
+         print("Warning: Cannot calculate operating line intersection for feed stage estimation.")
+         return None
+
+    L_bar = R * D + q * F_mol
+
+    try:
+        x_intersect = (- (B * xb) / V_bar - (xd / (R + 1.0))) / (R / (R + 1.0) - L_bar / V_bar)
+        y_intersect = _rectifying(x_intersect, R, xd) # Find y on the rectifying line at the intersection x
+
+        # The feed stage is estimated by finding which stage on the McCabe-Thiele diagram
+        # corresponds to this intersection point.
+        # This often involves stepping down from the top (xD) until the liquid composition
+        # on a stage is less than or equal to x_intersect, or stepping up from the bottom (xB)
+        # until the vapor composition from a stage is greater than or equal to y_intersect.
+
+        # A common approximation for the feed stage location (Kremser method related):
+        # Number of stages in rectifying section (above feed) N_rect:
+        # N_rect = log(((xd/(1-xd)) * ((1-y_intersect)/y_intersect)) * (1/alpha)) / log(alpha) # Using y_intersect from equi curve
+        # N_rect = log(((xd/(1-xd)) * ((1-x_intersect)/x_intersect))) / log(alpha) # Approx using x_intersect as liquid comp
+
+        # Using the graphical interpretation: Step down from xd until you cross the intersection point.
+        # This requires the stage-by-stage calculation logic.
+        # Since plot_mccabe_thiele already does the stage stepping and finds the feed stage based on the q-line intersection,
+        # let's refactor the feed stage calculation to use the result from plot_mccabe_thiele.
+
+        # This function should probably estimate the feed stage based on the intersection point and operating lines
+        # without re-doing the full stage stepping.
+        # A simpler empirical rule based on the intersection point:
+        # Step down from xd along the rectifying line until y_n = y_intersect. Find the corresponding x_n.
+        # Then find the number of ideal stages from xd to x_intersect using the equilibrium curve and rectifying line.
+
+        # Let's calculate the number of stages above the feed (N_rect) and below the feed (N_strip)
+        # needed to reach the intersection point from xd and xb respectively.
+        # The feed stage is then N_rect + 1 (if counting from the top).
+
+        # N_rect: stages from xd down to x_intersect on the rectifying section.
+        # This requires stepping down using the rectifying line and equilibrium curve from xd to x_intersect.
+        # Let's count stages from xd down to x_intersect using the rigorous equilibrium function.
+        n_rect = 0
+        x_current_rect = xd
+        # Need to step down the rectifying section.
+        # From y_n on the equilibrium curve, go down to x_n+1 on the rectifying line.
+        # y_n = equilibrium(x_current_rect)
+        # x_next_rect = (y_n - xd/(R+1)) * (R+1)/R
+
+        # This requires the rigorous equilibrium function and stepping, which is done in plot_mccabe_thiele.
+        # Let's instead use the calculated feed stage from the rigorous stage stepping in plot_mccabe_thiele.
+        # This means this `calculate_feed_stage` function might become redundant if the plot function returns the feed stage.
+
+        # If this function is to provide an *independent* estimate based on the intersection point,
+        # it needs to calculate stages to the intersection.
+        # Let's calculate stages from xd to x_intersect using the rectifying line and equilibrium.
+        # This is essentially a partial stage stepping.
+
+        n_rect_steps = 0
+        x_current_step = xd
+        # Use a small tolerance to avoid infinite loop if x_current_step exactly equals x_intersect
+        while x_current_step > x_intersect + 1e-9 and n_rect_steps < 100:
+             # Find equilibrium y for current x
+             # This requires the rigorous equilibrium function which needs Antoine coeffs and pressure.
+             # Let's assume this function will receive those parameters if it's to be rigorous.
+             # For now, let's keep it simple and use the original simplified equilibrium if rigorous VLE is not passed.
+             # To make it rigorous, it needs antoine_coeffs1, antoine_coeffs2, P_atm, gamma1, gamma2
+             # Let's update the function signature.
+
+             # Using the rigorous equilibrium (requires updating function signature to accept VLE params)
+             # y_eq_step = equilibrium(x_current_step, T_at_x_current, P_atm, ...) # Need temperature at x_current_step
+             # Finding T at each x is complex.
+
+             # Let's stick to the original approach of estimating based on the operating line intersection point.
+             # The feed stage is the stage where the liquid composition is between x_intersect and the liquid composition of the stage above it,
+             # and the vapor composition from that stage is between y_intersect and the vapor composition of the stage above it.
+
+             # A simpler approximation: the feed is on the stage where the liquid composition is closest to zf.
+             # Or, count stages from the top until the liquid composition is just below x_intersect.
+
+             # Let's assume for now that the feed stage returned by `plot_mccabe_thiele` is the primary rigorous estimate.
+             # This function can provide an alternate estimate based purely on the intersection point x_intersect.
+             # Find the number of ideal stages from xd down to x_intersect using Fenske-like approach or stepping on ideal curve?
+
+             # Let's calculate the number of stages from the top down to the intersection point x_intersect
+             # using the rectifying line and the equilibrium curve. This is essentially counting stages
+             # until the liquid composition is less than or equal to x_intersect.
+
+             # This still requires the stage stepping logic.
+             # It seems the most robust way to calculate the feed stage is within the stage stepping process.
+             # Let's rely on the feed stage estimated by `calculate_stages_rigorous_plotting` within `plot_mccabe_thiele`.
+
+             # Therefore, this `calculate_feed_stage` function should probably just return the x-coordinate of the intersection point
+             # or indicate where the feed should be introduced relative to the intersection.
+
+             # Let's return the calculated x_intersect and y_intersect for display,
+             # and rely on the plot function's stage stepping to identify the actual feed stage number.
+
+             # Re-calculating stages to find feed stage based on intersection x_intersect
+             n_stages_from_top_to_intersect = 0
+             x_current_step = xd
+             # Need to use the rectifying line and the actual equilibrium curve for stepping
+             # This requires the rigorous VLE. Let's call the rigorous stage calculation function
+             # and find the stage where the liquid composition crosses x_intersect.
+
+             # This seems circular. The rigorous plotting function already calculates the feed stage.
+             # Let's make this function simply return the x-coordinate of the intersection point
+             # of the operating lines as an alternative feed location indicator.
+
+             pass # Placeholder, as the logic seems to be integrated into plot_mccabe_thiele
+
+
+        # Let's calculate the intersection point and return it.
+        # The rigorous feed stage number will come from plot_mccabe_thiele.
+
+        return x_intersect # Return the x-coordinate of the intersection point
+
+    except Exception as e:
+        print(f"Error calculating feed stage intersection: {e}")
+        return None
+
+
+def fetch_nist_data(component_name):
+    """
+    Fetches boiling point and molecular weight data for a component from NIST.
+    Returns a dictionary with 'bp' and 'mw', or None if data not found.
+    Note: This is a simplified scraper and may break if NIST page structure changes.
+    It does NOT currently fetch Antoine coefficients.
+    """
+    base_url = "https://webbook.nist.gov/cgi/cbook.cgi?Name="
+    search_url = f"{base_url}{requests.utils.quote(component_name)}"
+
+    try:
+        response = requests.get(search_url)
+        response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        boiling_point = None
+        molecular_weight = None
+
+        # Attempt to find Boiling Point
+        # Look for links or text that might indicate thermal properties or phase change data
+        thermal_prop_link = soup.find('a', string=lambda text: text and 'Thermal properties' in text)
+        if thermal_prop_link:
+             thermal_url = "https://webbook.nist.gov" + thermal_prop_link['href']
+             thermal_response = requests.get(thermal_url)
+             thermal_response.raise_for_status()
+             thermal_soup = BeautifulSoup(thermal_response.content, 'html.parser')
+
+             # Look for Boiling Point in tables on the thermal properties page
+             for table in thermal_soup.find_all('table'):
+                 if "Boiling Point" in table.get_text():
+                     # Assuming the structure is a table with property name and value
+                     for row in table.find_all('tr'):
+                         cols = row.find_all(['td', 'th'])
+                         if len(cols) > 1 and "Boiling Point" in cols[0].get_text():
+                             try:
+                                 # Extract temperature, assume it's in the second column
+                                 bp_text = cols[1].get_text().strip()
+                                 # Extract numeric part and handle units
+                                 # Look for temperature followed by unit (C, K, F)
+                                 import re
+                                 match = re.search(r'([-+]?\d*\.?\d+)\s*([CKF])', bp_text)
+                                 if match:
+                                     temp_val = float(match.group(1))
+                                     unit = match.group(2)
+                                     if unit == 'C':
+                                         boiling_point = temp_val
+                                     elif unit == 'K':
+                                         boiling_point = temp_val - 273.15 # Convert K to C
+                                     elif unit == 'F':
+                                         boiling_point = (temp_val - 32) * 5/9 # Convert F to C
+                                     # Take the first valid boiling point found
+                                     break
+                             except (ValueError, IndexError, AttributeError) as e:
+                                 print(f"Could not parse boiling point from table row: {bp_text} - {e}")
+                 if boiling_point is not None: break # Stop searching tables once found
+
+
+        # Attempt to find Molecular Weight
+        # Molecular weight is often on the main page or identity page
+        mol_weight_heading = soup.find(['h2', 'h3'], string=lambda text: text and 'Molecular Weight' in text)
+        if mol_weight_heading:
+             try:
+                 # Assume molecular weight is in the next sibling tag or a nearby element
+                 mw_tag = mol_weight_heading.find_next(['p', 'div', 'span']) # Adjust tag based on inspection
+                 if mw_tag:
+                     mw_text = mw_tag.get_text().strip()
+                     # Extract the number, it might be the first number or labeled
+                     import re
+                     match = re.search(r'(\d+\.?\d*)', mw_text)
+                     if match:
+                          molecular_weight = float(match.group(1))
+                     else: # Sometimes it's just the number after the heading
+                         mw_sibling = mol_weight_heading.next_sibling
+                         if mw_sibling and isinstance(mw_sibling, str):
+                              match = re.search(r'(\d+\.?\d*)', mw_sibling)
+                              if match:
+                                  molecular_weight = float(match.group(1))
+
+             except Exception as e:
+                 print(f"Could not parse molecular weight for {component_name}: {e}")
+
+
+        # If boiling point or molecular weight is still None, try a more general search
+        if boiling_point is None:
+            for tag in soup.find_all(string=lambda text: text and "Boiling point" in text):
                 try:
-                    y_q_line = _q_line(x_current, q, zf)
-                    on_stripping_side = (y_eq <= y_q_line) # Check if equilibrium point is below or on the q-line
-                except: # Handle cases where q-line calculation might fail (e.g., q close to 1)
-                    on_stripping_side = False # Default to rectifying if q-line is problematic
-            else: # q = 0 (Saturated Vapor)
-                 on_stripping_side = (y_eq <= zf) # Horizontal q-line at y = zf
+                    # Look for temperature value in the surrounding text
+                    bp_text = tag.get_text()
+                    import re
+                    match = re.search(r'([-+]?\d*\.?\d+)\s*([CKF])', bp_text)
+                    if match:
+                         temp_val = float(match.group(1))
+                         unit = match.group(2)
+                         if unit == 'C': boiling_point = temp_val
+                         elif unit == 'K': boiling_point = temp_val - 273.15
+                         elif unit == 'F': boiling_point = (temp_val - 32) * 5/9
+                         if boiling_point is not None: break # Stop searching
+                except: pass # Ignore errors and continue searching
 
 
-            # Determine which operating line to use for the next step (finding x_next from y_eq)
-            # If the current stage is in the rectifying section (above the feed), use the rectifying line equation to find the liquid composition of the stage below.
-            # If the current stage is in the stripping section (at or below the feed), use the stripping line equation.
-
-            # The switch between operating lines for stepping occurs at the feed stage.
-            # The feed stage is where the liquid composition x on the tray is such that
-            # the equilibrium vapor composition y_eq is on the stripping line when coming from the rectifying line.
-
-            # A simpler way to implement the stepping logic for McCabe-Thiele is to check if the current liquid composition x_current
-            # is greater than the feed composition at the intersection point (x_feed_intersect).
-            # If x_current > x_feed_intersect, we are in the rectifying section.
-            # If x_current <= x_feed_intersect, we are in the stripping section.
-
-            # Need to be careful about the first stage (condenser) which is always on the rectifying line.
-            if stage_count == 0 or x_current > x_feed_intersect:
-                # Use rectifying line to find x of the stage below (stepping down)
-                # y_eq = R/(R+1) * x_next + xd/(R+1)
-                # x_next = (y_eq - xd/(R+1)) * (R+1)/R
-                 x_next = (y_eq - xd/(R+1)) * (R+1)/R
-                 y_next_op = _rectifying_line_func(x_next) # Corresponding y on the rectifying line
-
-            else:
-                # Use stripping line to find x of the stage below (stepping down)
-                # y_eq = (L_bar / V_bar) * x_next - (B * xb) / V_bar
-                # (y_eq + (B * xb) / V_bar) = (L_bar / V_bar) * x_next
-                # x_next = (y_eq + (B * xb) / V_bar) * (V_bar / L_bar)
-                L_bar = R * D + q * F_mol
-                V_bar = L_bar - B
-                if abs(L_bar) < 1e-9:
-                     print("Warning: Lbar is close to zero in stage calculation. Cannot calculate stripping line step.")
-                     break
-                x_next = (y_eq + (B * xb) / V_bar) * (V_bar / L_bar)
-                y_next_op = _stripping_line_func(x_next) # Corresponding y on the stripping line
-
-            # Check if we just crossed the feed point x-composition to estimate feed stage
-            if feed_stage_est is None and x_current > x_feed_intersect and x_next <= x_feed_intersect:
-                 feed_stage_est = stage_count + 1 # Feed is on the next stage (stage_count + 1)
-
-            x_stages.append(x_next)
-            y_stages.append(y_next_op) # Append the y value on the operating line
-
-            x_current = x_next
-            stage_count += 1
-
-            # Add a check to prevent stepping backwards or infinite loops if VLE is complex
-            if stage_count > 1 and x_stages[-1] >= x_stages[-3]:
-                 print(f"Warning: Stage calculation not progressing towards xb. Stopping at stage {stage_count}.")
-                 break
+        if molecular_weight is None:
+             for tag in soup.find_all(string=lambda text: text and "Molecular Weight" in text):
+                 try:
+                    mw_text = tag.get_text()
+                    import re
+                    match = re.search(r'(\d+\.?\d*)', mw_text)
+                    if match:
+                         molecular_weight = float(match.group(1))
+                         if molecular_weight is not None: break # Stop searching
+                 except: pass # Ignore errors and continue searching
 
 
-        return x_stages, y_stages, stage_count, feed_stage_est
-
-    # Call the rigorous stage calculation within plot_mccabe_thiele
-    # This will generate the actual points for the staircase using rigorous VLE and stepping logic
-    # and also provide an estimated feed stage from the stepping process.
-
-    # Need to regenerate the stairs_x, stairs_y, n_stages, and feed_stage based on the rigorous calculation.
-    # The initial staircase construction code in plot_mccabe_thiele was based on the old, simplified equilibrium.
-    # Let's replace it with the call to the new rigorous stage calculation.
-
-    x_stages, y_stages, n_stages, feed_stage_rigorous = calculate_stages_rigorous(
-         xd, xb, zf, q, R, F, D, B, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1, gamma2
-    )
-
-    # The stairs_x and stairs_y from calculate_stages_rigorous have a different structure
-    # They are [xd, xd, x_stage1_L, y_stage1_V, x_stage1_L, y_stage1_L_op, x_stage2_L, y_stage2_V...]
-    # We need to format them to match the stairs_x, stairs_y structure expected by the plotting code:
-    # [xd, xd, x_stage1_L, y_eq_stage1_L, x_stage1_L, y_op_stage1_L, x_stage2_L, y_eq_stage2_L, x_stage2_L, y_op_stage2_L ...]
-    # The calculate_stages_rigorous function returns [x_liquid_on_tray_i, y_vapor_from_tray_i, x_liquid_on_tray_i+1, y_liquid_on_tray_i_op]
-    # Let's adjust calculate_stages_rigorous to return the points in the desired format for plotting.
-
-    # Revised calculate_stages_rigorous to return points in the plotting format:
-    def calculate_stages_rigorous_plotting(xd, xb, zf, q, R, F_mol, D, B, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1=1.0, gamma2=1.0):
-        """
-        Calculates theoretical stages using rigorous VLE for McCabe-Thiele plotting.
-        Returns: stairs_x, stairs_y lists suitable for plotting, number of stages, and estimated feed stage.
-        """
-        def _equilibrium_rigorous(x):
-             eq_temp_celsius = bubble_point_temperature(x, P_atm, antoine_coeffs1, antoine_coeffs2,
-                                                       gamma1_func=lambda x_comp, T: gamma1,
-                                                       gamma2_func=lambda x_comp, T: gamma2)
-             if np.isnan(eq_temp_celsius):
-                 return np.nan
-             return calculate_vle(x, eq_temp_celsius, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1, gamma2)
-
-        def _rectifying_line_func(x):
-            return R/(R+1) * x + xd/(R+1)
-
-        def _stripping_line_func(x):
-            L_bar = R * D + q * F_mol
-            V_bar = L_bar - B
-            if abs(V_bar) < 1e-9:
-                 return np.nan
-            return (L_bar / V_bar) * x - (B * xb) / V_bar
-
-        stairs_x = [xd]
-        stairs_y = [xd]
-        x_current = xd # Liquid composition leaving the current stage (starts at condenser, x=xd)
-        stage_count = 0
-        feed_stage_est = None
-
-        # Calculate intersection point for operating line switch
-        if abs(q - 1.0) < 1e-6: x_feed_intersect = zf
-        elif abs((q/(q-1) - R/(R+1))) < 1e-9: x_feed_intersect = np.nan
+        if boiling_point is not None and molecular_weight is not None:
+            return {"bp": boiling_point, "mw": molecular_weight}
         else:
-            try:
-                x_feed_intersect = (xd/(R+1) + zf/(q-1)) / (q/(q-1) - R/(R+1))
-            except:
-                x_feed_intersect = np.nan
+            print(f"Could not find complete data for {component_name} on NIST.")
+            return None
 
-
-        while x_current > xb and stage_count < 200:
-            # Point on equilibrium curve from x_current (liquid leaving stage n)
-            y_eq_from_x_current = _equilibrium_rigorous(x_current)
-
-            if np.isnan(y_eq_from_x_current):
-                 print(f"Warning: Equilibrium calculation failed at x={x_current:.2f} during plotting stages. Stopping.")
-                 break
-
-            # Add horizontal step to equilibrium curve
-            stairs_x.append(x_current)
-            stairs_y.append(y_eq_from_x_current)
-
-            # Determine which operating line to use to find the liquid composition of the stage below (x_next)
-            # If x_current is > x_feed_intersect, we are in the rectifying section above the feed.
-            # If x_current <= x_feed_intersect, we are in the stripping section at or below the feed.
-            # Special case for the first step from xd: it's always on the rectifying line.
-            # The switch happens when the liquid composition *leaving* the stage crosses the feed intersection point.
-
-            if stage_count == 0 or x_current > x_feed_intersect:
-                 # Use rectifying line to find x_next (liquid leaving the stage below)
-                 # y_eq_from_x_current = R/(R+1) * x_next + xd/(R+1)
-                 # x_next = (y_eq_from_x_current - xd/(R+1)) * (R+1)/R
-                 x_next = (y_eq_from_x_current - xd/(R+1)) * (R+1)/R
-                 # Add vertical step down to the operating line
-                 stairs_x.append(x_next)
-                 stairs_y.append(y_eq_from_x_current)
-
-                 # Add point on the operating line at x_next
-                 stairs_x.append(x_next)
-                 stairs_y.append(_rectifying_line_func(x_next)) # This is the y value on the rectifying line at x_next
-
-
-            else:
-                 # Use stripping line to find x_next (liquid leaving the stage below)
-                 # y_eq_from_x_current = (L_bar / V_bar) * x_next - (B * xb) / V_bar
-                 L_bar = R * D + q * F_mol
-                 V_bar = L_bar - B
-                 if abs(L_bar) < 1e-9:
-                      print("Warning: Lbar is close to zero in plotting stage calculation. Cannot calculate stripping line step.")
-                      break
-                 x_next = (y_eq_from_x_current + (B * xb) / V_bar) * (V_bar / L_bar)
-                 # Add vertical step down to the operating line
-                 stairs_x.append(x_next)
-                 stairs_y.append(y_eq_from_x_current)
-
-                 # Add point on the operating line at x_next
-                 stairs_x.append(x_next)
-                 stairs_y.append(_stripping_line_func(x_next)) # This is the y value on the stripping line at x_next
-
-
-            # Check if this stage is the feed stage
-            # The feed stage is where the liquid composition leaving the stage (x_current)
-            # is just above the feed intersection x_feed_intersect, and the liquid composition
-            # on the stage below (x_next) is below or at x_feed_intersect.
-            # This means the feed is introduced to the stage where the liquid composition is x_next.
-            # The feed stage is the stage *below* the one where x_current > x_feed_intersect and x_next <= x_feed_intersect.
-            # If stage_count is the current stage number (starting from 0 for condenser), then the liquid leaving this stage is x_current.
-            # The liquid entering this stage from below is the vapor from stage stage_count+1.
-            # The feed enters stage_count + 1 if x_current > x_feed_intersect and x_next <= x_feed_intersect.
-            # The feed stage number is stage_count + 1 (1-indexed from top).
-
-            if feed_stage_est is None and x_current > x_feed_intersect and x_next <= x_feed_intersect:
-                 feed_stage_est = stage_count + 1 # Feed is on the next stage (stage_count + 1)
-
-            x_current = x_next
-            stage_count += 1
-
-            # Add a check to prevent stepping backwards or infinite loops
-            if stage_count > 1 and stairs_x[-1] >= stairs_x[-5]: # Compare current x_next with x_current from two steps ago
-                 print(f"Warning: Stage calculation not progressing towards xb. Stopping at stage {stage_count}.")
-                 break
-
-        return stairs_x, stairs_y, stage_count, feed_stage_est
-
-
-    # Call the revised rigorous stage calculation for plotting
-    stairs_x, stairs_y, n_stages, feed_stage_rigorous = calculate_stages_rigorous_plotting(
-         xd, xb, zf, q, R, F, D, B, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1, gamma2
-    )
-
-    # ------- 3) plotting (remains mostly the same, uses the new stairs_x/y) ------------------------------------------------
-    fig, ax = plt.subplots(figsize=(8, 8))
-
-    # Plot the rigorous equilibrium curve (recalculate with more points for smooth curve)
-    x_eq_plot = np.linspace(0, 1, 400)
-    y_eq_plot = []
-    for xi_plot in x_eq_plot:
-         if np.isclose(xi_plot, 0):
-              y_eq_plot.append(0.0)
-         elif np.isclose(xi_plot, 1):
-              y_eq_plot.append(1.0)
-         else:
-              eq_temp_celsius = bubble_point_temperature(xi_plot, P_atm, antoine_coeffs1, antoine_coeffs2,
-                                                       gamma1_func=lambda x_comp, T: gamma1,
-                                                       gamma2_func=lambda x_comp, T: gamma2)
-              if not np.isnan(eq_temp_celsius):
-                   y_eq_plot.append(_equilibrium_vle(xi_plot, eq_temp_celsius, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1, gamma2))
-              else:
-                   y_eq_plot.append(np.nan)
-
-    y_eq_plot = np.array(y_eq_plot)
-    valid_indices_plot = ~np.isnan(y_eq_plot)
-    x_eq_plot = x_eq_plot[valid_indices_plot]
-    y_eq_plot = y_eq_plot[valid_indices_plot]
-
-
-    ax.plot(x_eq_plot, y_eq_plot, 'b', lw=2, label='Equilibrium (Rigorous VLE)')
-    ax.plot([0, 1], [0, 1], 'k--', lw=0.7)
-
-    # Operating lines - plot from the intersection point
-    if not np.isnan(x_feed_intersect):
-         ax.plot(np.linspace(x_feed_intersect, xd, 100),
-                 _rectifying(np.linspace(x_feed_intersect, xd, 100), R, xd),
-                 'g', lw=2, label='Rectifying')
-
-         ax.plot(np.linspace(xb, x_feed_intersect, 100),
-                 _stripping(np.linspace(xb, x_feed_intersect, 100), R, q, F, D, B, xb),
-                 'r', lw=2, label='Stripping')
-    else: # Fallback plotting if intersection is NaN
-         ax.plot(np.linspace(0, xd, 100), _rectifying(np.linspace(0, xd, 100), R, xd), 'g', lw=2, label='Rectifying')
-         ax.plot(np.linspace(xb, 1, 100), _stripping(np.linspace(xb, 1, 100), R, q, F, D, B, xb), 'r', lw=2, label='Stripping')
-
-
-    # q-line
-    if abs(q - 1.0) < 1e-6: # Handle q = 1 (saturated liquid)
-        ax.axvline(x=zf, color='m', linestyle='--', lw=2, label='q-line')
-    elif abs(q - 1.0) > 1e-3:
-        qx_plot = np.linspace(0, 1, 2)
-        qy_plot = _q_line(qx_plot, q, zf)
-        ax.plot(qx_plot, qy_plot, 'm--', lw=2, label='q-line')
-
-
-    # staircase
-    ax.plot(stairs_x, stairs_y, 'o-', color='orange', markersize=4,
-            label='Stages')
-
-    # highlight feed stage - use the calculated feed stage from the rigorous stepping
-    if feed_stage_rigorous is not None and feed_stage_rigorous > 0: # Ensure feed_stage_rigorous is valid and > 0
-        # Find the liquid composition on the feed stage
-        # The liquid composition leaving stage N is at index 4*(N-1) in stairs_x/y
-        feed_stage_liquid_x_index = 4 * (feed_stage_rigorous - 1)
-        if feed_stage_liquid_x_index < len(stairs_x):
-             feed_stage_liquid_x = stairs_x[feed_stage_liquid_x_index]
-             # Find the corresponding vapor composition from that stage (on the equilibrium curve)
-             feed_stage_vapor_y_index = feed_stage_liquid_x_index + 1
-             if feed_stage_vapor_y_index < len(stairs_y):
-                 feed_stage_vapor_y = stairs_y[feed_stage_vapor_y_index]
-                 ax.scatter(feed_stage_liquid_x, feed_stage_vapor_y, color='purple',
-                            s=80, zorder=5, label=f'Feed stage ({feed_stage_rigorous})')
-             else:
-                  print(f"Warning: Could not mark feed stage {feed_stage_rigorous} on plot due to invalid index.")
-        else:
-             print(f"Warning: Could not find liquid composition for feed stage {feed_stage_rigorous} on plot.")
-
-
-    # stage numbers (every 2nd point on equilibrium curve)
-    for i in range(1, n_stages + 1):
-        idx = 4 * (i-1) + 1 # Index of the point on the equilibrium curve for stage i
-        if idx < len(stairs_x):
-             # Position the text near the step
-             text_x = stairs_x[idx]
-             text_y = stairs_y[idx]
-             # Adjust text position slightly for better readability
-             ax.text(text_x + 0.01, text_y + 0.01, str(i),
-                    fontsize=9, color='navy')
-
-
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.set_xlabel('Liquid mole fraction (light key)')
-    ax.set_ylabel('Vapor mole fraction (light key)')
-    ax.set_title('McCabe-Thiele Diagram (Rigorous VLE)')
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    return fig, n_stages, feed_stage_rigorous # Return rigorous feed stage estimate
-
-
-# The calculate_stages function is no longer used for plotting, but might be used elsewhere?
-# Let's keep it for now but rename it or clarify its purpose if needed.
-# The original calculate_stages seems to be for the staircase construction logic itself,
-# which has now been integrated into plot_mccabe_thiele using the rigorous VLE.
-# Let's remove the old calculate_stages function to avoid confusion.
-
-# Remove the old calculate_stages function definition from here...
-# def calculate_stages(alpha, R, xd, xb, feed_comp, q_value, F_mol, D, B):
-# ... (rest of the old function)
-
-
-# Update calculate_feed_stage to use the rigorous stage calculation result
-def calculate_feed_stage(antoine_coeffs1, antoine_coeffs2, R, xd, xb, zf, q, F_mol, D, B, P_atm, gamma1=1.0, gamma2=1.0):
-    """
-    Calculates the estimated feed stage based on the rigorous stage calculation.
-    This function now calls the rigorous stage calculation and returns its feed stage estimate.
-    """
-    # The logic for estimating the feed stage based on the intersection of operating lines
-    # is still valid, but the rigorous stage calculation also provides an estimate.
-    # Let's return the estimate from the rigorous stage calculation for consistency with the plot.
-
-    stairs_x, stairs_y, n_stages, feed_stage_rigorous = calculate_stages_rigorous_plotting(
-         xd, xb, zf, q, R, F_mol, D, B, P_atm, antoine_coeffs1, antoine_coeffs2, gamma1, gamma2
-    )
-
-    return feed_stage_rigorous # Return the feed stage estimated during rigorous stepping
-
-
-# The main function from the original script is not used in the Streamlit app context.
-# Remove the main function definition.
-# def main():
-# ... (rest of the main function)
-
-# Remove the if __name__ == "__main__": block.
-# if __name__ == "__main__":
-#     main()
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching data for {component_name} from NIST: {e}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred while processing {component_name}: {e}")
+        return None
